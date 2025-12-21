@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: qdrant-pvc
+  name: data-input-pvc
   namespace: default
 spec:
   accessModes:
@@ -9,4 +9,4 @@ spec:
   storageClassName: "microk8s-hostpath"
   resources:
     requests:
-      storage: 20Gi
+      storage: 5Gi

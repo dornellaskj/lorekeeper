@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upload-service
+  namespace: default
+  labels:
+    app: upload-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: upload-service
+  template:
+    metadata:
+      labels:
+        app: upload-service
+    spec:
+      serviceAccountName: upload-service-sa
+      containers:
+      - name: upload-service
+        image: lorekeeper/upload-service:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: UPLOAD_DIR
+          value: "/uploads"
+        - name: MAX_FILE_SIZE
+          value: "104857600"
+        volumeMounts:
+        - name: upload-storage
+          mountPath: /uploads
+        - name: kube-config
+          mountPath: /root/.kube
+          readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: upload-storage
+        persistentVolumeClaim:
+          claimName: data-input-pvc
+      - name: kube-config
+        secret:
+          secretName: kubeconfig-secret
+          optional: true

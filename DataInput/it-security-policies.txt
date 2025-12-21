@@ -1,0 +1,88 @@
+# IT Security Policies
+
+---
+
+## Password Policy
+
+### Requirements
+All user passwords must meet the following criteria:
+- Minimum 12 characters in length
+- Include uppercase and lowercase letters
+- Contain at least one number and special character
+- Cannot reuse last 12 passwords
+
+### Password Rotation
+- Standard users: Change every 90 days
+- Privileged accounts: Change every 30 days
+- Service accounts: Change every 180 days
+
+---
+
+## Access Control Policy
+
+### User Provisioning
+New user access is granted through the following process:
+1. Manager submits access request form
+2. IT security reviews and approves
+3. System administrator creates account
+4. User receives welcome email with instructions
+
+### Deprovisioning
+When employees leave:
+1. HR notifies IT within 24 hours
+2. All accounts are immediately disabled
+3. Access review is conducted after 30 days
+4. Accounts are permanently deleted after 90 days
+
+---
+
+## Data Classification
+
+### Confidential Data
+Information that could cause significant harm if disclosed:
+- Customer personal information
+- Financial records
+- Strategic business plans
+- Source code and intellectual property
+
+### Internal Data
+Information for internal use only:
+- Employee directories
+- Internal procedures
+- Budget information
+- Vendor contracts
+
+### Public Data
+Information that can be freely shared:
+- Marketing materials
+- Public website content
+- Press releases
+- Product documentation
+
+---
+
+## Incident Response
+
+### Security Incident Categories
+- **Critical**: Data breach, system compromise, ransomware
+- **High**: Unauthorized access attempt, malware detection
+- **Medium**: Policy violation, suspicious activity
+- **Low**: Failed login attempts, minor policy infractions
+
+### Response Timeline
+- Critical incidents: Immediate response (within 15 minutes)
+- High priority: Response within 1 hour
+- Medium priority: Response within 4 hours
+- Low priority: Response within 24 hours
+
+### Incident Response Team
+- Incident Commander: IT Security Manager
+- Technical Lead: Senior System Administrator
+- Communications: IT Director
+- Legal Representative: General Counsel (for critical incidents)
+
+---
+Document Owner: IT Security Team
+Version: 3.2
+Effective Date: January 2025
+Keywords: security, policy, access control, incident response, data classification

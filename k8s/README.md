@@ -42,6 +42,7 @@ After deployment, Qdrant will be available:
 
 ## Notes
 
-- Adjust the `storageClassName` in the PVC based on your cluster's available storage classes
+- Using `microk8s-hostpath` storage class for MicroK8s compatibility
 - The LoadBalancer service type might need to be changed to `ClusterIP` or `NodePort` depending on your cluster setup
 - For production deployments, consider increasing replicas and resources
+- With MicroK8s hostpath storage, the PVC will be bound when the pod starts (WaitForFirstConsumer mode)

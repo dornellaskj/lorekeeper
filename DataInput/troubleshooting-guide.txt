@@ -1,0 +1,157 @@
+# Troubleshooting Guide
+
+## Common Issues and Solutions
+
+### Authentication Problems
+
+#### Issue: Users cannot log in
+**Symptoms**:
+- Login form returns "Invalid credentials" error
+- Users report password not working
+
+**Troubleshooting Steps**:
+1. Check if the authentication service is running:
+   ```bash
+   kubectl get pods -l app=auth-service
+   ```
+2. Verify database connectivity:
+   ```bash
+   kubectl logs -l app=auth-service | grep "database"
+   ```
+3. Check for account lockouts in the logs
+4. Verify JWT token configuration
+
+**Common Solutions**:
+- Restart authentication service if unhealthy
+- Clear Redis cache if stale sessions are suspected
+- Check password policy changes that might affect existing passwords
+
+#### Issue: JWT tokens expired immediately
+**Symptoms**:
+- Users logged out immediately after login
+- API returns 401 errors frequently
+
+**Root Causes**:
+- Clock synchronization issues between services
+- Incorrect JWT expiration configuration
+- Redis session store issues
+
+**Solutions**:
+- Synchronize system clocks across all nodes
+- Verify JWT_EXPIRATION environment variable
+- Check Redis connectivity and storage
+
+### Performance Issues
+
+#### Issue: Slow API response times
+**Symptoms**:
+- API responses taking >2 seconds
+- Frontend appears sluggish
+- Users reporting timeouts
+
+**Investigation Steps**:
+1. Check service resource usage:
+   ```bash
+   kubectl top pods
+   ```
+2. Review database query performance:
+   ```sql
+   SELECT * FROM pg_stat_activity WHERE state = 'active';
+   ```
+3. Monitor network latency between services
+
+**Optimization Actions**:
+- Scale up pods if CPU/memory usage is high
+- Add database indexes for slow queries
+- Implement caching for frequently accessed data
+- Review and optimize database connection pooling
+
+#### Issue: High memory usage
+**Symptoms**:
+- Pods being killed due to OOMKilled
+- Services becoming unresponsive
+- Increased response times
+
+**Memory Leak Detection**:
+1. Monitor memory usage over time
+2. Check for unclosed database connections
+3. Review application logs for memory-intensive operations
+4. Profile the application using memory profiling tools
+
+### Database Issues
+
+#### Issue: Connection pool exhausted
+**Symptoms**:
+- "Too many connections" errors in logs
+- Services unable to connect to database
+- Database performance degradation
+
+**Resolution Steps**:
+1. Identify services with connection leaks
+2. Review database connection configuration
+3. Implement connection pooling best practices
+4. Monitor active connections regularly
+
+#### Issue: Database migration failures
+**Symptoms**:
+- Services fail to start after deployment
+- Database schema inconsistencies
+- Migration timeout errors
+
+**Recovery Process**:
+1. Check migration logs for specific errors
+2. Verify database permissions for migration user
+3. Run migrations manually if needed
+4. Rollback to previous schema version if necessary
+
+### Network and Connectivity
+
+#### Issue: Service-to-service communication failures
+**Symptoms**:
+- Services cannot reach each other
+- Intermittent connection errors
+- DNS resolution failures
+
+**Diagnostic Commands**:
+```bash
+# Check service endpoints
+kubectl get endpoints
+
+# Test DNS resolution
+kubectl run debug --image=busybox --rm -it -- nslookup service-name
+
+# Check network policies
+kubectl get networkpolicies
+```
+
+#### Issue: External API integration problems
+**Symptoms**:
+- Third-party service calls failing
+- Webhook deliveries not received
+- SSL/TLS certificate errors
+
+**Troubleshooting**:
+1. Verify API credentials and endpoints
+2. Check firewall rules for outbound connections
+3. Test SSL certificate validity
+4. Review API rate limiting and quotas
+
+## Emergency Procedures
+
+### Service Recovery
+1. **Immediate Response**: Scale down affected services to prevent cascade failures
+2. **Isolation**: Implement circuit breakers to isolate problematic components
+3. **Rollback**: Use blue-green deployment to quickly revert to last known good version
+4. **Communication**: Notify stakeholders and provide regular status updates
+
+### Data Recovery
+1. **Assessment**: Identify scope and impact of data issues
+2. **Backup Restoration**: Restore from most recent clean backup
+3. **Point-in-Time Recovery**: Use transaction logs for precise recovery
+4. **Validation**: Verify data integrity after recovery
+
+---
+Source: DevOps Team
+Version: 2.0
+Last Updated: December 2025
+Keywords: troubleshooting, debugging, performance, database, networking, recovery

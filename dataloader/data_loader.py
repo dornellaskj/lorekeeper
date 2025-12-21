@@ -1,0 +1,283 @@
+import os
+import logging
+from pathlib import Path
+from typing import List, Dict, Any
+import hashlib
+from dataclasses import dataclass
+
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct, CollectionInfo
+from sentence_transformers import SentenceTransformer
+import numpy as np
+from tqdm import tqdm
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+@dataclass
+class DocumentChunk:
+    """Represents a chunk of text from a document."""
+    content: str
+    file_path: str
+    file_name: str
+    chunk_index: int
+    metadata: Dict[str, Any]
+
+class DataLoader:
+    """Data loader for ingesting documents into Qdrant vector database."""
+    
+    def __init__(
+        self,
+        qdrant_host: str = "localhost",
+        qdrant_port: int = 6333,
+        collection_name: str = "documents",
+        embedding_model: str = "all-MiniLM-L6-v2",
+        chunk_size: int = 500,
+        chunk_overlap: int = 50
+    ):
+        self.qdrant_host = qdrant_host
+        self.qdrant_port = qdrant_port
+        self.collection_name = collection_name
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        
+        # Initialize Qdrant client
+        self.qdrant_client = QdrantClient(host=qdrant_host, port=qdrant_port)
+        
+        # Initialize embedding model
+        logger.info(f"Loading embedding model: {embedding_model}")
+        self.embedding_model = SentenceTransformer(embedding_model)
+        self.vector_size = self.embedding_model.get_sentence_embedding_dimension()
+        
+        # Ensure collection exists
+        self._ensure_collection_exists()
+    
+    def _ensure_collection_exists(self):
+        """Create collection if it doesn't exist."""
+        try:
+            collection_info = self.qdrant_client.get_collection(self.collection_name)
+            logger.info(f"Collection '{self.collection_name}' already exists")
+        except Exception:
+            logger.info(f"Creating collection '{self.collection_name}'")
+            self.qdrant_client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=VectorParams(
+                    size=self.vector_size,
+                    distance=Distance.COSINE
+                )
+            )
+    
+    def _read_text_file(self, file_path: Path) -> str:
+        """Read text content from a file."""
+        try:
+            # Try different encodings
+            encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252']
+            
+            for encoding in encodings:
+                try:
+                    with open(file_path, 'r', encoding=encoding) as f:
+                        return f.read()
+                except UnicodeDecodeError:
+                    continue
+            
+            # If all encodings fail, read as binary and decode with errors='ignore'
+            with open(file_path, 'rb') as f:
+                return f.read().decode('utf-8', errors='ignore')
+                
+        except Exception as e:
+            logger.error(f"Error reading file {file_path}: {e}")
+            return ""
+    
+    def _chunk_text(self, text: str, file_path: str, file_name: str) -> List[DocumentChunk]:
+        """Split text into overlapping chunks."""
+        chunks = []
+        
+        # Simple character-based chunking
+        start = 0
+        chunk_index = 0
+        
+        while start < len(text):
+            end = start + self.chunk_size
+            chunk_content = text[start:end]
+            
+            # Try to end at a sentence boundary if possible
+            if end < len(text):
+                # Look for sentence endings within the last 100 characters
+                sentence_endings = ['. ', '! ', '? ', '\n\n']
+                best_end = end
+                
+                for i in range(max(0, end - 100), end):
+                    for ending in sentence_endings:
+                        if text[i:i+len(ending)] == ending:
+                            best_end = i + len(ending)
+                
+                chunk_content = text[start:best_end]
+                end = best_end
+            
+            if chunk_content.strip():  # Only add non-empty chunks
+                chunk = DocumentChunk(
+                    content=chunk_content.strip(),
+                    file_path=file_path,
+                    file_name=file_name,
+                    chunk_index=chunk_index,
+                    metadata={
+                        'file_size': len(text),
+                        'chunk_start': start,
+                        'chunk_end': end
+                    }
+                )
+                chunks.append(chunk)
+                chunk_index += 1
+            
+            start = end - self.chunk_overlap
+        
+        return chunks
+    
+    def _generate_chunk_id(self, chunk: DocumentChunk) -> str:
+        """Generate a unique ID for a chunk."""
+        content = f"{chunk.file_path}_{chunk.chunk_index}_{chunk.content[:100]}"
+        return hashlib.md5(content.encode()).hexdigest()
+    
+    def _embed_chunks(self, chunks: List[DocumentChunk]) -> List[np.ndarray]:
+        """Generate embeddings for chunks."""
+        texts = [chunk.content for chunk in chunks]
+        logger.info(f"Generating embeddings for {len(texts)} chunks")
+        
+        # Generate embeddings in batches
+        embeddings = self.embedding_model.encode(
+            texts,
+            batch_size=32,
+            show_progress_bar=True,
+            convert_to_numpy=True
+        )
+        
+        return embeddings
+    
+    def load_documents(self, data_folder: str) -> None:
+        """Load all documents from the specified folder."""
+        data_path = Path(data_folder)
+        
+        if not data_path.exists():
+            logger.error(f"Data folder {data_folder} does not exist")
+            return
+        
+        # Find all text files
+        text_extensions = {'.txt', '.md', '.rst', '.log', '.py', '.js', '.html', '.css', '.json', '.xml', '.yaml', '.yml'}
+        text_files = []
+        
+        for ext in text_extensions:
+            text_files.extend(data_path.rglob(f'*{ext}'))
+        
+        if not text_files:
+            logger.warning(f"No text files found in {data_folder}")
+            return
+        
+        logger.info(f"Found {len(text_files)} text files")
+        
+        all_chunks = []
+        
+        # Process each file
+        for file_path in tqdm(text_files, desc="Processing files"):
+            logger.info(f"Processing: {file_path}")
+            
+            content = self._read_text_file(file_path)
+            if not content.strip():
+                logger.warning(f"File is empty or unreadable: {file_path}")
+                continue
+            
+            # Split into chunks
+            chunks = self._chunk_text(
+                content,
+                str(file_path),
+                file_path.name
+            )
+            
+            all_chunks.extend(chunks)
+            logger.info(f"Created {len(chunks)} chunks from {file_path.name}")
+        
+        if not all_chunks:
+            logger.warning("No chunks created from any files")
+            return
+        
+        logger.info(f"Total chunks to process: {len(all_chunks)}")
+        
+        # Generate embeddings
+        embeddings = self._embed_chunks(all_chunks)
+        
+        # Prepare points for Qdrant
+        points = []
+        for chunk, embedding in zip(all_chunks, embeddings):
+            point = PointStruct(
+                id=self._generate_chunk_id(chunk),
+                vector=embedding.tolist(),
+                payload={
+                    'content': chunk.content,
+                    'file_path': chunk.file_path,
+                    'file_name': chunk.file_name,
+                    'chunk_index': chunk.chunk_index,
+                    **chunk.metadata
+                }
+            )
+            points.append(point)
+        
+        # Upload to Qdrant in batches
+        batch_size = 100
+        total_batches = (len(points) + batch_size - 1) // batch_size
+        
+        logger.info(f"Uploading {len(points)} points to Qdrant in {total_batches} batches")
+        
+        for i in tqdm(range(0, len(points), batch_size), desc="Uploading to Qdrant"):
+            batch = points[i:i + batch_size]
+            
+            try:
+                self.qdrant_client.upsert(
+                    collection_name=self.collection_name,
+                    points=batch
+                )
+            except Exception as e:
+                logger.error(f"Error uploading batch {i//batch_size + 1}: {e}")
+                raise
+        
+        logger.info("Data loading completed successfully!")
+        
+        # Print collection stats
+        collection_info = self.qdrant_client.get_collection(self.collection_name)
+        logger.info(f"Collection '{self.collection_name}' now contains {collection_info.points_count} points")
+
+def main():
+    """Main entry point."""
+    # Configuration from environment variables
+    qdrant_host = os.getenv("QDRANT_HOST", "qdrant-service")
+    qdrant_port = int(os.getenv("QDRANT_PORT", "6333"))
+    collection_name = os.getenv("QDRANT_COLLECTION", "documents")
+    data_folder = os.getenv("DATA_FOLDER", "/data")
+    embedding_model = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    chunk_size = int(os.getenv("CHUNK_SIZE", "500"))
+    chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "50"))
+    
+    logger.info(f"Starting data loader with configuration:")
+    logger.info(f"  Qdrant Host: {qdrant_host}:{qdrant_port}")
+    logger.info(f"  Collection: {collection_name}")
+    logger.info(f"  Data Folder: {data_folder}")
+    logger.info(f"  Embedding Model: {embedding_model}")
+    logger.info(f"  Chunk Size: {chunk_size}")
+    logger.info(f"  Chunk Overlap: {chunk_overlap}")
+    
+    # Initialize and run data loader
+    loader = DataLoader(
+        qdrant_host=qdrant_host,
+        qdrant_port=qdrant_port,
+        collection_name=collection_name,
+        embedding_model=embedding_model,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap
+    )
+    
+    loader.load_documents(data_folder)
+
+if __name__ == "__main__":
+    main()

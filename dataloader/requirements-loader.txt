@@ -1,0 +1,8 @@
+# Data Loader Requirements
+qdrant-client==1.7.0
+sentence-transformers==2.2.2
+numpy==1.24.3
+tqdm==4.66.1
+torch==2.1.0
+transformers==4.35.0
+huggingface-hub==0.17.0
