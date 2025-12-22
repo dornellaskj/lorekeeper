@@ -176,6 +176,9 @@ async def upload_page():
                     <button class="upload-btn" onclick="listAllFiles()" style="background-color: #17a2b8; margin-left: 10px; display: inline-block;">
                         📋 List All Files
                     </button>
+                    <button class="upload-btn" onclick="clearAllFiles()" style="background-color: #dc3545; margin-left: 10px; display: inline-block;">
+                        🗑️ Clear All Files
+                    </button>
                 </div>
             </div>
 
@@ -364,6 +367,31 @@ async def upload_page():
                     }
                 } catch (error) {
                     showStatus('Error starting force data processing', 'error');
+                }
+            }
+
+            async function clearAllFiles() {
+                if (!confirm('Are you sure you want to delete ALL uploaded files? This action cannot be undone!')) {
+                    return;
+                }
+                
+                try {
+                    showStatus('Deleting all files...', 'info');
+                    const response = await fetch('/files/clear', { method: 'DELETE' });
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        showStatus(data.message, 'success');
+                        // Clear the file list display
+                        document.getElementById('allFilesList').style.display = 'none';
+                        // Update file count
+                        document.getElementById('fileCount').innerHTML = `📊 0 files uploaded`;
+                    } else {
+                        showStatus(data.detail || 'Error clearing files', 'error');
+                    }
+                } catch (error) {
+                    console.error('Clear files error:', error);
+                    showStatus('Error clearing files', 'error');
                 }
             }
 
