@@ -19,6 +19,7 @@ spec:
       containers:
       - name: upload-service
         image: lorekeeper/upload-service:latest
+        imagePullPolicy: Never
         ports:
         - containerPort: 8080
         env:
