@@ -337,9 +337,18 @@ class DataLoader:
         processed_files_count = self._get_processed_files_count()
         logger.info(f"Already processed files in database: {processed_files_count}")
         
+        # Debug: Log all relevant environment variables
+        logger.info(f"Environment variables:")
+        logger.info(f"  FORCE_REPROCESS = '{os.getenv('FORCE_REPROCESS', 'NOT_SET')}'")
+        logger.info(f"  SKIP_PROCESSED_FILES = '{os.getenv('SKIP_PROCESSED_FILES', 'NOT_SET')}'")
+        logger.info(f"  CHUNK_SIZE = '{os.getenv('CHUNK_SIZE', 'NOT_SET')}'")
+        logger.info(f"  CHUNK_OVERLAP = '{os.getenv('CHUNK_OVERLAP', 'NOT_SET')}'")
+        
         # Check for force reprocess flag
         force_reprocess = os.getenv("FORCE_REPROCESS", "false").lower() == "true"
         skip_processed = os.getenv("SKIP_PROCESSED_FILES", "true").lower() == "true"
+        
+        logger.info(f"Parsed flags: force_reprocess={force_reprocess}, skip_processed={skip_processed}")
         
         # If force reprocess is enabled, clear existing data and process all files
         if force_reprocess:
