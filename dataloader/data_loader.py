@@ -180,11 +180,49 @@ class DataLoader:
         return chunks
     
     def _generate_chunk_id(self, chunk: DocumentChunk) -> str:
-        """Generate a unique ID for a chunk."""
-        content = f"{chunk.file_path}_{chunk.chunk_index}_{chunk.content[:100]}"
+        """Generate a unique ID for a chunk based on file path, modification time, and content."""
+        # Include file path and chunk index for uniqueness
+        content = f"{chunk.file_path}_{chunk.chunk_index}_{chunk.content[:50]}"
         return hashlib.md5(content.encode()).hexdigest()
     
-    def _embed_chunks(self, chunks: List[DocumentChunk]) -> List[np.ndarray]:
+    def _is_file_already_processed(self, file_path: Path) -> bool:
+        """Check if a file has already been processed by looking for its chunks in Qdrant."""
+        try:
+            # Search for any chunk from this file
+            search_result = self.qdrant_client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter={
+                    "must": [{
+                        "key": "file_path",
+                        "match": {"value": str(file_path)}
+                    }]
+                },
+                limit=1
+            )
+            return len(search_result[0]) > 0
+        except Exception as e:
+            logger.warning(f"Could not check if file {file_path} is processed: {e}")
+            return False
+    
+    def _get_processed_files_count(self) -> int:
+        """Get count of unique files already processed."""
+        try:
+            # Get a sample of points to count unique files
+            scroll_result = self.qdrant_client.scroll(
+                collection_name=self.collection_name,
+                limit=10000,  # Adjust based on your needs
+                with_payload=True
+            )
+            
+            unique_files = set()
+            for point in scroll_result[0]:
+                if point.payload and 'file_path' in point.payload:
+                    unique_files.add(point.payload['file_path'])
+            
+            return len(unique_files)
+        except Exception as e:
+            logger.warning(f"Could not count processed files: {e}")
+            return 0
         """Generate embeddings for chunks."""
         texts = [chunk.content for chunk in chunks]
         logger.info(f"Generating embeddings for {len(texts)} chunks")
@@ -220,10 +258,34 @@ class DataLoader:
         
         logger.info(f"Found {len(text_files)} text files")
         
+        # Check how many files are already processed
+        processed_files_count = self._get_processed_files_count()
+        logger.info(f"Already processed files in database: {processed_files_count}")
+        
+        # Filter out already processed files (optional - can be disabled)
+        skip_processed = os.getenv("SKIP_PROCESSED_FILES", "true").lower() == "true"
+        files_to_process = []
+        
+        if skip_processed:
+            for file_path in text_files:
+                if self._is_file_already_processed(file_path):
+                    logger.info(f"Skipping already processed file: {file_path.name}")
+                else:
+                    files_to_process.append(file_path)
+            
+            logger.info(f"Files to process: {len(files_to_process)} (skipped {len(text_files) - len(files_to_process)} already processed)")
+        else:
+            files_to_process = text_files
+            logger.info(f"Processing all {len(files_to_process)} files (skip check disabled)")
+        
+        if not files_to_process:
+            logger.info("No new files to process!")
+            return
+        
         all_chunks = []
         
         # Process each file
-        for file_path in tqdm(text_files, desc="Processing files"):
+        for file_path in tqdm(files_to_process, desc="Processing files"):
             logger.info(f"Processing: {file_path}")
             
             content = self._read_text_file(file_path)

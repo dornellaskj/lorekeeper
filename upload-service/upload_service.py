@@ -176,7 +176,10 @@ async def upload_page():
 
             <div style="text-align: center; margin-top: 30px;">
                 <button class="upload-btn" onclick="triggerDataLoader()" style="background-color: #28a745;">
-                    🚀 Start Data Processing
+                    🚀 Start Data Processing (New Files Only)
+                </button>
+                <button class="upload-btn" onclick="triggerDataLoaderForce()" style="background-color: #dc3545; margin-left: 10px;">
+                    🔄 Force Reprocess All Files
                 </button>
             </div>
         </div>
@@ -281,6 +284,22 @@ async def upload_page():
                     }
                 } catch (error) {
                     showStatus('Error starting data processing', 'error');
+                }
+            }
+
+            async function triggerDataLoaderForce() {
+                try {
+                    showStatus('Starting force data processing (reprocessing all files)...', 'info');
+                    const response = await fetch('/trigger-loader-force', { method: 'POST' });
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        showStatus(data.message, 'success');
+                    } else {
+                        showStatus(data.detail, 'error');
+                    }
+                } catch (error) {
+                    showStatus('Error starting force data processing', 'error');
                 }
             }
 
@@ -433,6 +452,38 @@ async def trigger_data_loader():
     except Exception as e:
         logger.error(f"Error triggering data loader: {e}")
         raise HTTPException(status_code=500, detail=f"Error starting data loader: {str(e)}")
+
+@app.post("/trigger-loader-force")
+async def trigger_data_loader_force():
+    """Trigger the data loader job in force mode (reprocess all files)."""
+    try:
+        import subprocess
+        
+        # Delete existing job if it exists
+        subprocess.run([
+            "kubectl", "delete", "job", "data-loader-cpu", "--ignore-not-found=true"
+        ], capture_output=True)
+        
+        # Create new job with force config
+        result = subprocess.run([
+            "kubectl", "apply", "-f", "/app/k8s/data-loader-force-config.yaml"
+        ], capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            raise Exception(f"Failed to apply force config: {result.stderr}")
+            
+        result = subprocess.run([
+            "kubectl", "apply", "-f", "/app/k8s/data-loader-cpu-job.yaml"
+        ], capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            raise Exception(f"Failed to create force job: {result.stderr}")
+        
+        return {"message": "Force data loader job started! All files will be reprocessed. Check logs with: kubectl logs -f job/data-loader-cpu"}
+        
+    except Exception as e:
+        logger.error(f"Error triggering force data loader: {e}")
+        raise HTTPException(status_code=500, detail=f"Error starting force data loader: {str(e)}")
 
 @app.delete("/files/clear")
 async def clear_files():

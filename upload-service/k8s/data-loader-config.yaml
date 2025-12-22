@@ -11,3 +11,4 @@ data:
   EMBEDDING_MODEL: "all-MiniLM-L6-v2"
   CHUNK_SIZE: "500"
   CHUNK_OVERLAP: "50"
+  SKIP_PROCESSED_FILES: "true"  # Set to "false" to reprocess all files

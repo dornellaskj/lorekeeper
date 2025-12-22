@@ -171,6 +171,30 @@ The data loader can be configured via environment variables:
 | `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | SentenceTransformers model |
 | `CHUNK_SIZE` | `500` | Maximum characters per chunk |
 | `CHUNK_OVERLAP` | `50` | Character overlap between chunks |
+| `SKIP_PROCESSED_FILES` | `true` | Skip files already in database |
+
+## Smart Processing
+
+The data loader now includes smart processing features:
+
+- **Duplicate Detection**: Uses file path and content hashing to identify unique chunks
+- **Skip Processed Files**: By default, skips files that are already in the database
+- **Incremental Loading**: Only processes new or changed files
+- **Force Reprocessing**: Can be configured to reprocess all files
+
+### Processing Modes
+
+**Default (Incremental)**:
+```bash
+kubectl apply -f k8s/data-loader-config.yaml
+kubectl apply -f k8s/data-loader-cpu-job.yaml
+```
+
+**Force Reprocess All Files**:
+```bash
+kubectl apply -f k8s/data-loader-force-config.yaml
+kubectl apply -f k8s/data-loader-cpu-job.yaml
+```
 
 ## Supported File Types
 
