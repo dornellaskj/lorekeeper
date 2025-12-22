@@ -423,65 +423,89 @@ def generate_answer(question: str, context: str, search_results: list) -> str:
     
     question_lower = question.lower()
     
-    # If the question is about technology, return more comprehensive information
-    if any(tech_word in question_lower for tech_word in ['technology', 'tech', 'framework', 'built', 'stack', 'architecture']):
-        # Look for technology-related information across all results
-        tech_info = []
-        for result in search_results:
-            content = result.payload.get("content", "")
-            if any(word in content.lower() for word in ['javascript', 'react', 'dojo', 'framework', 'application', 'built', 'frontend', 'technology']):
-                tech_info.append(content.strip())
+    # If the question is about technology, extract technology-specific information
+    if any(tech_word in question_lower for tech_word in ['technology', 'tech', 'framework', 'built', 'stack', 'architecture', 'development']):
+        # Look for technology-related sentences in the context
+        tech_sentences = []
+        sentences = context.replace('. ', '.\n').replace('? ', '?\n').replace('! ', '!\n').split('\n')
         
-        if tech_info:
-            # Combine technology information
-            combined_tech = "\n\n".join(tech_info)
-            # Remove duplicates and clean up
-            sentences = []
-            for sentence in combined_tech.split('.'):
-                sentence = sentence.strip()
-                if sentence and sentence not in sentences:
-                    sentences.append(sentence)
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if any(tech_term in sentence.lower() for tech_term in [
+                'javascript', 'react', 'dojo', 'framework', 'library', 'application', 'built', 
+                'frontend', 'technology', 'programming', 'development', 'code', 'software'
+            ]):
+                if len(sentence) > 20:  # Filter out very short fragments
+                    tech_sentences.append(sentence)
+        
+        if tech_sentences:
+            # Clean up and deduplicate
+            unique_sentences = []
+            for sentence in tech_sentences:
+                # Remove markdown headers
+                clean_sentence = sentence.replace('#', '').strip()
+                if clean_sentence and clean_sentence not in unique_sentences:
+                    unique_sentences.append(clean_sentence)
             
-            result = ". ".join(sentences[:5]) + "."  # Top 5 unique sentences
-            return result if len(result) > 50 else context[:500] + "..."
+            if unique_sentences:
+                answer = " ".join(unique_sentences[:2])  # Top 2 most relevant sentences
+                # Ensure proper sentence endings
+                if not answer.endswith(('.', '!', '?')):
+                    answer += '.'
+                return answer
     
-    # General question handling
-    context_sentences = []
-    for sentence in context.split('.'):
-        sentence = sentence.strip()
-        if sentence and len(sentence) > 10:  # Filter out very short fragments
-            context_sentences.append(sentence)
+    # For other questions, try to extract key information
+    question_keywords = [word.lower() for word in question_lower.split() 
+                        if len(word) > 2 and word not in [
+                            'what', 'how', 'why', 'when', 'where', 'tell', 'about', 'the', 
+                            'and', 'or', 'but', 'is', 'are', 'was', 'were', 'can', 'could',
+                            'would', 'should', 'will', 'do', 'does', 'did'
+                        ]]
     
-    # Find most relevant sentences based on keyword matching
-    question_keywords = [word.lower() for word in question_lower.split() if len(word) > 2 and word not in ['what', 'how', 'why', 'when', 'where', 'tell', 'about', 'the', 'and', 'or', 'but']]
-    
+    # Find sentences containing the most keywords
+    sentences = context.replace('. ', '.\n').replace('? ', '?\n').replace('! ', '!\n').split('\n')
     scored_sentences = []
-    for sentence in context_sentences:
-        sentence_lower = sentence.lower()
-        score = sum(1 for keyword in question_keywords if keyword in sentence_lower)
-        if score > 0:
-            scored_sentences.append((score, sentence))
+    
+    for sentence in sentences:
+        sentence = sentence.strip().replace('#', '').strip()  # Remove markdown headers
+        if len(sentence) > 20:  # Filter out short fragments
+            sentence_lower = sentence.lower()
+            score = sum(1 for keyword in question_keywords if keyword in sentence_lower)
+            if score > 0:
+                scored_sentences.append((score, sentence))
     
     if scored_sentences:
-        # Sort by relevance score and take top sentences
+        # Sort by relevance and take top sentences
         scored_sentences.sort(reverse=True, key=lambda x: x[0])
-        top_sentences = [sentence for _, sentence in scored_sentences[:3]]
-        answer = ". ".join(top_sentences) + "."
+        top_sentences = [sentence for _, sentence in scored_sentences[:2]]
+        answer = " ".join(top_sentences)
         
-        # Ensure answer is substantial
-        if len(answer) > 100:
+        # Ensure proper sentence endings
+        if not answer.endswith(('.', '!', '?')):
+            answer += '.'
+        
+        if len(answer) > 50:  # Make sure we have a substantial answer
             return answer
     
-    # Fallback: return first substantial part of context
-    if len(context) > 200:
-        # Find a good breaking point
-        break_point = context.find('. ', 200)
-        if break_point > 0:
-            return context[:break_point + 1]
+    # Fallback: return a cleaned up excerpt from context
+    clean_context = context.replace('#', '').strip()
+    sentences = clean_context.split('.')
+    
+    # Find the first substantial sentence
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if len(sentence) > 30:
+            return sentence + '.'
+    
+    # Last resort: return cleaned context up to 200 chars
+    if len(clean_context) > 200:
+        cutoff = clean_context.find('. ', 150)
+        if cutoff > 0:
+            return clean_context[:cutoff + 1]
         else:
-            return context[:300] + "..."
+            return clean_context[:200] + '...'
     else:
-        return context
+        return clean_context
 
 @app.get("/health")
 async def health_check():
