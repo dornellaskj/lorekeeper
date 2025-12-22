@@ -423,87 +423,99 @@ def generate_answer(question: str, context: str, search_results: list) -> str:
     
     question_lower = question.lower()
     
-    # If the question is about technology, extract technology-specific information
-    if any(tech_word in question_lower for tech_word in ['technology', 'tech', 'framework', 'built', 'stack', 'architecture', 'development']):
-        # Look for technology-related sentences in the context
-        tech_sentences = []
-        sentences = context.replace('. ', '.\n').replace('? ', '?\n').replace('! ', '!\n').split('\n')
+    # Clean the context by removing markdown headers
+    clean_context = context.replace('#', '').strip()
+    
+    # Split context into sentences using regex
+    import re
+    sentences = re.split(r'[.!?]+', clean_context)
+    clean_sentences = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 10]
+    
+    # Handle Yes/No questions first
+    yes_no_indicators = ['is', 'are', 'does', 'do', 'can', 'will', 'should', 'has', 'have']
+    if any(indicator in question_lower.split()[:3] for indicator in yes_no_indicators):
+        # For yes/no questions, look for confirming information
+        question_keywords = [word.lower() for word in question_lower.split() 
+                           if len(word) > 2 and word not in yes_no_indicators + ['a', 'an', 'the', 'it']]
         
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if any(tech_term in sentence.lower() for tech_term in [
-                'javascript', 'react', 'dojo', 'framework', 'library', 'application', 'built', 
-                'frontend', 'technology', 'programming', 'development', 'code', 'software'
-            ]):
-                if len(sentence) > 20:  # Filter out very short fragments
-                    tech_sentences.append(sentence)
+        best_sentence = None
+        highest_score = 0
         
-        if tech_sentences:
-            # Clean up and deduplicate
-            unique_sentences = []
-            for sentence in tech_sentences:
-                # Remove markdown headers
-                clean_sentence = sentence.replace('#', '').strip()
-                if clean_sentence and clean_sentence not in unique_sentences:
-                    unique_sentences.append(clean_sentence)
-            
-            if unique_sentences:
-                answer = " ".join(unique_sentences[:2])  # Top 2 most relevant sentences
-                # Ensure proper sentence endings
-                if not answer.endswith(('.', '!', '?')):
-                    answer += '.'
-                return answer
-    
-    # For other questions, try to extract key information
-    question_keywords = [word.lower() for word in question_lower.split() 
-                        if len(word) > 2 and word not in [
-                            'what', 'how', 'why', 'when', 'where', 'tell', 'about', 'the', 
-                            'and', 'or', 'but', 'is', 'are', 'was', 'were', 'can', 'could',
-                            'would', 'should', 'will', 'do', 'does', 'did'
-                        ]]
-    
-    # Find sentences containing the most keywords
-    sentences = context.replace('. ', '.\n').replace('? ', '?\n').replace('! ', '!\n').split('\n')
-    scored_sentences = []
-    
-    for sentence in sentences:
-        sentence = sentence.strip().replace('#', '').strip()  # Remove markdown headers
-        if len(sentence) > 20:  # Filter out short fragments
+        for sentence in clean_sentences:
             sentence_lower = sentence.lower()
             score = sum(1 for keyword in question_keywords if keyword in sentence_lower)
-            if score > 0:
-                scored_sentences.append((score, sentence))
+            if score > highest_score:
+                highest_score = score
+                best_sentence = sentence
+        
+        if best_sentence and highest_score > 0:
+            # Check if the sentence supports a "yes" answer
+            sentence_lower = best_sentence.lower()
+            # Look for affirming patterns
+            if any(keyword in sentence_lower for keyword in question_keywords):
+                # For B2B question: if sentence contains "business to business" -> "Yes"
+                if 'b2b' in question_lower or 'business to business' in question_lower:
+                    if 'business to business' in sentence_lower or 'b2b' in sentence_lower:
+                        return f"Yes, {best_sentence.lower()}."
+                # For other yes/no questions, provide context
+                return f"Yes, {best_sentence.lower()}."
+            else:
+                return f"Based on the information: {best_sentence}."
+    
+    # Extract key terms from the question (excluding common words)
+    question_keywords = [word.lower() for word in question_lower.split() 
+                        if len(word) > 2 and word not in [
+                            'what', 'how', 'why', 'when', 'where', 'who', 'which', 'tell', 'me',
+                            'about', 'the', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 
+                            'can', 'could', 'would', 'should', 'will', 'do', 'does', 'did',
+                            'has', 'have', 'had', 'this', 'that', 'these', 'those', 'a', 'an'
+                        ]]
+    
+    # Score sentences based on keyword relevance
+    scored_sentences = []
+    for sentence in clean_sentences:
+        sentence_lower = sentence.lower()
+        # Count keyword matches
+        keyword_score = sum(1 for keyword in question_keywords if keyword in sentence_lower)
+        
+        # Bonus for exact phrase matches
+        phrase_bonus = 0
+        if len(question_keywords) >= 2:
+            for i in range(len(question_keywords) - 1):
+                phrase = f"{question_keywords[i]} {question_keywords[i+1]}"
+                if phrase in sentence_lower:
+                    phrase_bonus += 2
+        
+        total_score = keyword_score + phrase_bonus
+        if total_score > 0:
+            scored_sentences.append((total_score, sentence))
     
     if scored_sentences:
-        # Sort by relevance and take top sentences
+        # Sort by relevance and return the best sentence
         scored_sentences.sort(reverse=True, key=lambda x: x[0])
-        top_sentences = [sentence for _, sentence in scored_sentences[:2]]
-        answer = " ".join(top_sentences)
+        best_sentence = scored_sentences[0][1]
         
-        # Ensure proper sentence endings
-        if not answer.endswith(('.', '!', '?')):
-            answer += '.'
-        
-        if len(answer) > 50:  # Make sure we have a substantial answer
-            return answer
+        # Make sure sentence ends properly
+        if not best_sentence.endswith(('.', '!', '?')):
+            best_sentence += '.'
+            
+        return best_sentence
     
-    # Fallback: return a cleaned up excerpt from context
-    clean_context = context.replace('#', '').strip()
-    sentences = clean_context.split('.')
+    # If no good matches, return the first substantial sentence
+    for sentence in clean_sentences:
+        if len(sentence) > 20:
+            if not sentence.endswith(('.', '!', '?')):
+                sentence += '.'
+            return sentence
     
-    # Find the first substantial sentence
-    for sentence in sentences:
-        sentence = sentence.strip()
-        if len(sentence) > 30:
-            return sentence + '.'
-    
-    # Last resort: return cleaned context up to 200 chars
-    if len(clean_context) > 200:
-        cutoff = clean_context.find('. ', 150)
+    # Final fallback - return cleaned context
+    if len(clean_context) > 300:
+        # Find a good breaking point
+        cutoff = clean_context.find('. ', 250)
         if cutoff > 0:
             return clean_context[:cutoff + 1]
         else:
-            return clean_context[:200] + '...'
+            return clean_context[:300] + '...'
     else:
         return clean_context
 
