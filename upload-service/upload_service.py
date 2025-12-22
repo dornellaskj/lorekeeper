@@ -169,12 +169,14 @@ async def upload_page():
             <ul class="file-list" id="fileList"></ul>
 
             <div class="file-count" id="fileCount">
-                <button class="upload-btn" onclick="getFileCount()" style="background-color: #6c757d;">
-                    📊 Check Uploaded Files Count
-                </button>
-                <button class="upload-btn" onclick="listAllFiles()" style="background-color: #17a2b8; margin-left: 10px;">
-                    📋 List All Files
-                </button>
+                <div style="text-align: center; margin: 20px 0;">
+                    <button class="upload-btn" onclick="getFileCount()" style="background-color: #6c757d;">
+                        📊 Check Uploaded Files Count
+                    </button>
+                    <button class="upload-btn" onclick="listAllFiles()" style="background-color: #17a2b8; margin-left: 10px; display: inline-block;">
+                        📋 List All Files
+                    </button>
+                </div>
             </div>
 
             <div id="allFilesList" style="display: none; margin-top: 20px; background: #f8f9fa; padding: 20px; border-radius: 5px;">
@@ -280,18 +282,23 @@ async def upload_page():
             }
 
             async function listAllFiles() {
+                console.log('listAllFiles function called');
                 try {
                     showStatus('Loading file list...', 'info');
                     const response = await fetch('/files/list');
                     const data = await response.json();
+                    
+                    console.log('File list response:', data);
                     
                     if (response.ok) {
                         displayFileList(data.files);
                         showStatus(`Loaded ${data.count} files`, 'success');
                     } else {
                         showStatus('Error loading file list', 'error');
+                        console.error('File list error:', data);
                     }
                 } catch (error) {
+                    console.error('File list fetch error:', error);
                     showStatus('Error loading file list', 'error');
                 }
             }
@@ -371,6 +378,18 @@ async def upload_page():
                 const i = Math.floor(Math.log(bytes) / Math.log(k));
                 return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
             }
+
+            // Debug: Check if buttons are present when page loads
+            document.addEventListener('DOMContentLoaded', function() {
+                console.log('Page loaded');
+                const fileCountDiv = document.getElementById('fileCount');
+                console.log('fileCount div:', fileCountDiv);
+                const buttons = fileCountDiv ? fileCountDiv.querySelectorAll('button') : [];
+                console.log('Found buttons in fileCount:', buttons.length);
+                buttons.forEach((btn, index) => {
+                    console.log(`Button ${index}:`, btn.textContent.trim());
+                });
+            });
         </script>
     </body>
     </html>
