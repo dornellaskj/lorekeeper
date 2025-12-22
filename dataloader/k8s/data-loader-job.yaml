@@ -12,7 +12,8 @@ spec:
       restartPolicy: Never
       containers:
       - name: data-loader
-        image: lorekeeper/data-loader:latest  # You'll need to build and push this image
+        image: lorekeeper/data-loader:latest
+        imagePullPolicy: Never  # Use local Docker image
         envFrom:
         - configMapRef:
             name: data-loader-config

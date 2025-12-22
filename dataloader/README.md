@@ -53,13 +53,55 @@ The data loader provides:
    docker build -f Dockerfile.loader -t lorekeeper/data-loader:latest .
    ```
 
-2. **Push to your registry**:
+2. **Push to your registry** (choose one option):
+
+   **Option A: Use MicroK8s built-in registry (recommended for local development)**:
    ```bash
-   docker tag lorekeeper/data-loader:latest your-registry/lorekeeper/data-loader:latest
-   docker push your-registry/lorekeeper/data-loader:latest
+   # Enable the built-in registry addon
+   sudo microk8s enable registry
+   
+   # Tag and push to local registry
+   docker tag lorekeeper/data-loader:latest localhost:32000/lorekeeper/data-loader:latest
+   docker push localhost:32000/lorekeeper/data-loader:latest
    ```
 
-3. **Update the image reference** in `k8s/data-loader-job.yaml`
+   **Option B: Skip registry push (use local image)**:
+   ```bash
+   # No push needed - MicroK8s can use local Docker images
+   # Just make sure the image exists locally
+   docker images | grep lorekeeper/data-loader
+   ```
+
+   **Option C: Use external registry**:
+   ```bash
+   # For Docker Hub (replace 'yourusername' with your Docker Hub username)
+   docker tag lorekeeper/data-loader:latest yourusername/lorekeeper-data-loader:latest
+   docker push yourusername/lorekeeper-data-loader:latest
+   
+   # For other registries, replace with your registry URL
+   docker tag lorekeeper/data-loader:latest your-registry.com/lorekeeper/data-loader:latest
+   docker push your-registry.com/lorekeeper/data-loader:latest
+   ```
+
+3. **Update the image reference** in `k8s/data-loader-job.yaml`:
+
+   **If using MicroK8s registry**:
+   ```yaml
+   image: localhost:32000/lorekeeper/data-loader:latest
+   ```
+
+   **If using local image (no registry)**:
+   ```yaml
+   image: lorekeeper/data-loader:latest
+   imagePullPolicy: Never  # This tells K8s to use local image
+   ```
+
+   **If using external registry**:
+   ```yaml
+   image: yourusername/lorekeeper-data-loader:latest
+   # or
+   image: your-registry.com/lorekeeper/data-loader:latest
+   ```
 
 4. **Deploy the Qdrant database** (if not already deployed):
    ```bash
