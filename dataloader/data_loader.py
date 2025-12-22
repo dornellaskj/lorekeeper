@@ -48,6 +48,9 @@ class DataLoader:
         # Initialize Qdrant client
         self.qdrant_client = QdrantClient(host=qdrant_host, port=qdrant_port)
         
+        # Test connection
+        self._test_connection()
+        
         # Initialize embedding model
         logger.info(f"Loading embedding model: {embedding_model}")
         
@@ -70,13 +73,30 @@ class DataLoader:
         # Ensure collection exists
         self._ensure_collection_exists()
     
+    def _test_connection(self):
+        """Test connection to Qdrant server."""
+        try:
+            # Simple health check
+            collections = self.qdrant_client.get_collections()
+            logger.info(f"Successfully connected to Qdrant. Found {len(collections.collections)} collections.")
+        except Exception as e:
+            logger.error(f"Failed to connect to Qdrant at {self.qdrant_host}:{self.qdrant_port}")
+            logger.error(f"Connection error: {e}")
+            raise ConnectionError(f"Cannot connect to Qdrant: {e}")
+    
     def _ensure_collection_exists(self):
         """Create collection if it doesn't exist."""
         try:
+            # Try to get collection info
             collection_info = self.qdrant_client.get_collection(self.collection_name)
-            logger.info(f"Collection '{self.collection_name}' already exists")
-        except Exception:
-            logger.info(f"Creating collection '{self.collection_name}'")
+            logger.info(f"Collection '{self.collection_name}' already exists with {collection_info.points_count} points")
+            return
+        except Exception as e:
+            logger.info(f"Collection '{self.collection_name}' does not exist or error occurred: {e}")
+        
+        try:
+            # Try to create the collection
+            logger.info(f"Creating collection '{self.collection_name}' with vector size {self.vector_size}")
             self.qdrant_client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=VectorParams(
@@ -84,6 +104,14 @@ class DataLoader:
                     distance=Distance.COSINE
                 )
             )
+            logger.info(f"Successfully created collection '{self.collection_name}'")
+        except Exception as e:
+            # Check if the error is about collection already existing
+            if "already exists" in str(e).lower() or "conflict" in str(e).lower():
+                logger.info(f"Collection '{self.collection_name}' already exists (detected from error)")
+            else:
+                logger.error(f"Failed to create collection '{self.collection_name}': {e}")
+                raise
     
     def _read_text_file(self, file_path: Path) -> str:
         """Read text content from a file."""
