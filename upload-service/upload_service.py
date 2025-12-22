@@ -145,7 +145,7 @@ async def upload_page():
     </head>
     <body>
         <div class="container">
-            <h1>📚 Lorekeeper File Upload</h1>
+            <h1>📚 Lorekeeper File Upload!</h1>
             
             <div class="info">
                 <strong>Supported file types:</strong> .txt, .md, .rst, .log, .py, .js, .html, .css, .json, .xml, .yaml, .yml, .zip
@@ -173,10 +173,10 @@ async def upload_page():
                     <button class="upload-btn" onclick="getFileCount()" style="background-color: #6c757d;">
                         📊 Check Uploaded Files Count
                     </button>
-                    <button class="upload-btn" onclick="listAllFiles()" style="background-color: #17a2b8; margin-left: 10px; display: inline-block;">
+                    <button class="upload-btn" onclick="listAllFiles()" style="background-color: #17a2b8;">
                         📋 List All Files
                     </button>
-                    <button class="upload-btn" onclick="clearAllFiles()" style="background-color: #dc3545; margin-left: 10px; display: inline-block;">
+                    <button class="upload-btn" onclick="clearAllFiles()" style="background-color: #dc3545;">
                         🗑️ Clear All Files
                     </button>
                 </div>
