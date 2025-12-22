@@ -13,7 +13,10 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install PyTorch CPU-only first
+RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
