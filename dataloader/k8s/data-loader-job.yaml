@@ -12,8 +12,8 @@ spec:
       restartPolicy: Never
       containers:
       - name: data-loader
-        image: lorekeeper/data-loader:latest
-        imagePullPolicy: Never  # Use local Docker image
+        image: localhost:32000/lorekeeper/data-loader:latest
+        imagePullPolicy: Always
         envFrom:
         - configMapRef:
             name: data-loader-config
