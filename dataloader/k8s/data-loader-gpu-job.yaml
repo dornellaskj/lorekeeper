@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: data-loader-gpu
+  namespace: default
+spec:
+  template:
+    metadata:
+      labels:
+        app: data-loader-gpu
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: data-loader
+        image: lorekeeper/data-loader:latest
+        imagePullPolicy: Never  # Use local Docker image
+        envFrom:
+        - configMapRef:
+            name: data-loader-gpu-config
+        volumeMounts:
+        - name: data-input
+          mountPath: /data
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+            nvidia.com/gpu: 1
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+            nvidia.com/gpu: 1
+        env:
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: "all"
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility"
+      volumes:
+      - name: data-input
+        persistentVolumeClaim:
+          claimName: data-input-pvc
+  backoffLimit: 3

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: data-loader-gpu-config
+  namespace: default
+data:
+  QDRANT_HOST: "qdrant-service"
+  QDRANT_PORT: "6333"
+  QDRANT_COLLECTION: "documents"
+  DATA_FOLDER: "/data"
+  EMBEDDING_MODEL: "all-MiniLM-L6-v2"
+  CHUNK_SIZE: "1000"  # Larger chunks for GPU processing
+  CHUNK_OVERLAP: "100"
+  # GPU-specific settings
+  CUDA_VISIBLE_DEVICES: "0"
+  PYTORCH_CUDA_ALLOC_CONF: "max_split_size_mb:512"

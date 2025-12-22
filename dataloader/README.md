@@ -130,12 +130,14 @@ The data loader provides:
 
    **CPU Version (default)**:
    ```bash
+   kubectl apply -f k8s/data-input-pvc.yaml
    kubectl apply -f k8s/data-loader-config.yaml
    kubectl apply -f k8s/data-loader-job.yaml
    ```
 
    **GPU Version (recommended for faster processing)**:
    ```bash
+   kubectl apply -f k8s/data-input-pvc.yaml
    kubectl apply -f k8s/data-loader-gpu-config.yaml
    kubectl apply -f k8s/data-loader-gpu-job.yaml
    ```
