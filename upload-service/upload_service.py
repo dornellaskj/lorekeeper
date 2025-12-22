@@ -410,7 +410,7 @@ async def trigger_data_loader():
         
         # Delete existing job if it exists
         subprocess.run([
-            "kubectl", "delete", "job", "data-loader", "--ignore-not-found=true"
+            "kubectl", "delete", "job", "data-loader-cpu", "--ignore-not-found=true"
         ], capture_output=True)
         
         # Create new job
