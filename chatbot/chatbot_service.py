@@ -423,46 +423,35 @@ def generate_answer(question: str, context: str, search_results: list) -> str:
     
     question_lower = question.lower()
     
-    # Clean the context by removing markdown headers
-    clean_context = context.replace('#', '').strip()
-    
-    # Split context into sentences using regex
-    import re
-    sentences = re.split(r'[.!?]+', clean_context)
-    clean_sentences = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 10]
-    
-    # Handle Yes/No questions first
-    yes_no_indicators = ['is', 'are', 'does', 'do', 'can', 'will', 'should', 'has', 'have']
-    if any(indicator in question_lower.split()[:3] for indicator in yes_no_indicators):
-        # For yes/no questions, look for confirming information
-        question_keywords = [word.lower() for word in question_lower.split() 
-                           if len(word) > 2 and word not in yes_no_indicators + ['a', 'an', 'the', 'it']]
+    # Parse markdown structure to understand sections
+    def parse_markdown_sections(text):
+        lines = text.split('\n')
+        sections = []
+        current_section = {'level': 0, 'title': '', 'content': []}
         
-        best_sentence = None
-        highest_score = 0
+        for line in lines:
+            line = line.strip()
+            if line.startswith('#'):
+                # Save previous section
+                if current_section['content']:
+                    sections.append(current_section)
+                
+                # Start new section
+                level = len(line) - len(line.lstrip('#'))
+                title = line.lstrip('#').strip()
+                current_section = {'level': level, 'title': title, 'content': []}
+            elif line:
+                current_section['content'].append(line)
         
-        for sentence in clean_sentences:
-            sentence_lower = sentence.lower()
-            score = sum(1 for keyword in question_keywords if keyword in sentence_lower)
-            if score > highest_score:
-                highest_score = score
-                best_sentence = sentence
+        # Add final section
+        if current_section['content']:
+            sections.append(current_section)
         
-        if best_sentence and highest_score > 0:
-            # Check if the sentence supports a "yes" answer
-            sentence_lower = best_sentence.lower()
-            # Look for affirming patterns
-            if any(keyword in sentence_lower for keyword in question_keywords):
-                # For B2B question: if sentence contains "business to business" -> "Yes"
-                if 'b2b' in question_lower or 'business to business' in question_lower:
-                    if 'business to business' in sentence_lower or 'b2b' in sentence_lower:
-                        return f"Yes, {best_sentence.lower()}."
-                # For other yes/no questions, provide context
-                return f"Yes, {best_sentence.lower()}."
-            else:
-                return f"Based on the information: {best_sentence}."
+        return sections
     
-    # Extract key terms from the question (excluding common words)
+    sections = parse_markdown_sections(context)
+    
+    # Extract keywords from question
     question_keywords = [word.lower() for word in question_lower.split() 
                         if len(word) > 2 and word not in [
                             'what', 'how', 'why', 'when', 'where', 'who', 'which', 'tell', 'me',
@@ -471,53 +460,125 @@ def generate_answer(question: str, context: str, search_results: list) -> str:
                             'has', 'have', 'had', 'this', 'that', 'these', 'those', 'a', 'an'
                         ]]
     
-    # Score sentences based on keyword relevance
-    scored_sentences = []
-    for sentence in clean_sentences:
-        sentence_lower = sentence.lower()
-        # Count keyword matches
-        keyword_score = sum(1 for keyword in question_keywords if keyword in sentence_lower)
+    # Handle Yes/No questions first
+    yes_no_indicators = ['is', 'are', 'does', 'do', 'can', 'will', 'should', 'has', 'have']
+    if any(indicator in question_lower.split()[:3] for indicator in yes_no_indicators):
+        # Find the most relevant section for yes/no questions
+        best_section = None
+        highest_score = 0
         
-        # Bonus for exact phrase matches
-        phrase_bonus = 0
-        if len(question_keywords) >= 2:
-            for i in range(len(question_keywords) - 1):
-                phrase = f"{question_keywords[i]} {question_keywords[i+1]}"
-                if phrase in sentence_lower:
-                    phrase_bonus += 2
+        for section in sections:
+            section_text = f"{section['title']} {' '.join(section['content'])}".lower()
+            score = sum(1 for keyword in question_keywords if keyword in section_text)
+            if score > highest_score:
+                highest_score = score
+                best_section = section
         
-        total_score = keyword_score + phrase_bonus
-        if total_score > 0:
-            scored_sentences.append((total_score, sentence))
-    
-    if scored_sentences:
-        # Sort by relevance and return the best sentence
-        scored_sentences.sort(reverse=True, key=lambda x: x[0])
-        best_sentence = scored_sentences[0][1]
-        
-        # Make sure sentence ends properly
-        if not best_sentence.endswith(('.', '!', '?')):
-            best_sentence += '.'
+        if best_section and highest_score > 0:
+            section_content = ' '.join(best_section['content'])
             
-        return best_sentence
+            # For B2B questions
+            if 'b2b' in question_lower or 'business to business' in question_lower:
+                if any(term in section_content.lower() for term in ['business to business', 'b2b', 'business']):
+                    return f"Yes, based on the {best_section['title']} section: {section_content.split('.')[0]}."
+            
+            # General yes/no answer
+            first_sentence = section_content.split('.')[0]
+            if first_sentence:
+                return f"Yes, according to the {best_section['title']}: {first_sentence}."
     
-    # If no good matches, return the first substantial sentence
-    for sentence in clean_sentences:
-        if len(sentence) > 20:
-            if not sentence.endswith(('.', '!', '?')):
-                sentence += '.'
-            return sentence
+    # Special handling for technology/architecture questions
+    if any(tech_word in question_lower for tech_word in ['technology', 'tech', 'framework', 'built', 'stack', 'architecture', 'development', 'programming', 'service', 'database', 'frontend', 'backend']):
+        # Look for architecture or tech-related sections
+        tech_sections = []
+        for section in sections:
+            section_title_lower = section['title'].lower()
+            section_content = ' '.join(section['content']).lower()
+            
+            if any(tech_term in section_title_lower or tech_term in section_content for tech_term in [
+                'architecture', 'frontend', 'backend', 'technology', 'service', 'database',
+                'application', 'layer', 'security', 'deployment', 'system', 'api',
+                'javascript', 'react', 'dojo', 'framework', 'microservices'
+            ]):
+                tech_sections.append(section)
+        
+        if tech_sections:
+            # Find the most relevant tech section
+            best_tech_section = None
+            best_score = 0
+            
+            for section in tech_sections:
+                section_text = f"{section['title']} {' '.join(section['content'])}".lower()
+                score = sum(1 for keyword in question_keywords if keyword in section_text)
+                if score > best_score:
+                    best_score = score
+                    best_tech_section = section
+            
+            if best_tech_section:
+                content = ' '.join(best_tech_section['content'])
+                # Return section title and first relevant sentence
+                first_sentence = content.split('.')[0]
+                if len(first_sentence) > 10:
+                    return f"From the {best_tech_section['title']}: {first_sentence}."
+                else:
+                    # Get first substantial sentence
+                    sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 20]
+                    if sentences:
+                        return f"From the {best_tech_section['title']}: {sentences[0]}."
     
-    # Final fallback - return cleaned context
-    if len(clean_context) > 300:
-        # Find a good breaking point
-        cutoff = clean_context.find('. ', 250)
-        if cutoff > 0:
-            return clean_context[:cutoff + 1]
-        else:
-            return clean_context[:300] + '...'
-    else:
-        return clean_context
+    # General question handling - find most relevant section
+    best_section = None
+    highest_score = 0
+    
+    for section in sections:
+        section_text = f"{section['title']} {' '.join(section['content'])}".lower()
+        
+        # Score based on keyword matches
+        keyword_score = sum(1 for keyword in question_keywords if keyword in section_text)
+        
+        # Bonus for title matches
+        title_score = sum(2 for keyword in question_keywords if keyword in section['title'].lower())
+        
+        total_score = keyword_score + title_score
+        if total_score > highest_score:
+            highest_score = total_score
+            best_section = section
+    
+    if best_section and highest_score > 0:
+        content = ' '.join(best_section['content'])
+        
+        # Find most relevant sentence within the section
+        sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 15]
+        
+        if sentences:
+            # Score sentences within the section
+            best_sentence = sentences[0]
+            best_sentence_score = 0
+            
+            for sentence in sentences:
+                sentence_lower = sentence.lower()
+                score = sum(1 for keyword in question_keywords if keyword in sentence_lower)
+                if score > best_sentence_score:
+                    best_sentence_score = score
+                    best_sentence = sentence
+            
+            # Return with section context
+            if not best_sentence.endswith(('.', '!', '?')):
+                best_sentence += '.'
+            
+            if best_section['title']:
+                return f"From the {best_section['title']}: {best_sentence}"
+            else:
+                return best_sentence
+    
+    # Fallback to original logic if no sections found
+    clean_context = context.replace('#', '').strip()
+    sentences = [s.strip() for s in clean_context.split('.') if len(s.strip()) > 15]
+    
+    if sentences:
+        return sentences[0] + ('.' if not sentences[0].endswith(('.', '!', '?')) else '')
+    
+    return clean_context[:300] + ('...' if len(clean_context) > 300 else '')
 
 @app.get("/health")
 async def health_check():
