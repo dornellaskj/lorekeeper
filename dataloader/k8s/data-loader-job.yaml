@@ -22,11 +22,13 @@ spec:
           mountPath: /data
         resources:
           requests:
-            memory: "1Gi"
-            cpu: "500m"
-          limits:
             memory: "2Gi"
-            cpu: "1000m"
+            cpu: "500m"
+            nvidia.com/gpu: 1
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+            nvidia.com/gpu: 1
       volumes:
       - name: data-input
         persistentVolumeClaim:

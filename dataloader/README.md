@@ -127,21 +127,33 @@ The data loader provides:
    ```
 
 6. **Run the data loader**:
+
+   **CPU Version (default)**:
    ```bash
    kubectl apply -f k8s/data-loader-config.yaml
    kubectl apply -f k8s/data-loader-job.yaml
    ```
 
+   **GPU Version (recommended for faster processing)**:
+   ```bash
+   kubectl apply -f k8s/data-loader-gpu-config.yaml
+   kubectl apply -f k8s/data-loader-gpu-job.yaml
+   ```
+
 7. **Monitor the job**:
    ```bash
-   # Check job status
+   # Check job status (use 'data-loader-gpu' for GPU version)
    kubectl get jobs
    
-   # View logs
+   # View logs (use 'data-loader-gpu' for GPU version)
    kubectl logs -f job/data-loader
+   # or for GPU version:
+   kubectl logs -f job/data-loader-gpu
    
    # Clean up completed job (optional)
    kubectl delete job data-loader
+   # or for GPU version:
+   kubectl delete job data-loader-gpu
    ```
 
 ## Configuration

@@ -50,8 +50,22 @@ class DataLoader:
         
         # Initialize embedding model
         logger.info(f"Loading embedding model: {embedding_model}")
-        self.embedding_model = SentenceTransformer(embedding_model)
+        
+        # Check for GPU availability
+        import torch
+        if torch.cuda.is_available():
+            device = "cuda"
+            logger.info(f"GPU detected: {torch.cuda.get_device_name(0)}")
+            logger.info(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+        else:
+            device = "cpu"
+            logger.info("No GPU detected, using CPU")
+        
+        self.embedding_model = SentenceTransformer(embedding_model, device=device)
         self.vector_size = self.embedding_model.get_sentence_embedding_dimension()
+        
+        logger.info(f"Embedding model loaded on {device.upper()}")
+        logger.info(f"Vector dimension: {self.vector_size}")
         
         # Ensure collection exists
         self._ensure_collection_exists()
