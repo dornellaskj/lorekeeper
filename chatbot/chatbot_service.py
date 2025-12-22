@@ -399,6 +399,16 @@ async def chat(request: QueryRequest):
         
         # Generate answer based on context - use all relevant results
         context = "\n\n".join(context_parts)  # Use all results for better context
+        
+        # Debug: Print what we're working with
+        print(f"\nDEBUG - Question: {request.question}")
+        print(f"DEBUG - Context length: {len(context)}")
+        print(f"DEBUG - Search results count: {len(search_results)}")
+        for i, result in enumerate(search_results):
+            text = result.payload.get("content", "No content")
+            print(f"DEBUG - Result {i} (score: {result.score:.3f}): {text[:150]}...")
+        print(f"DEBUG - Full context: {context[:800]}...")
+        
         answer = generate_answer(request.question, context, search_results)
         
         query_time = (datetime.now() - start_time).total_seconds()
@@ -432,24 +442,30 @@ def generate_answer(question: str, context: str, search_results: list) -> str:
         for line in lines:
             line = line.strip()
             if line.startswith('#'):
-                # Save previous section
-                if current_section['content']:
+                # Save previous section if it has content
+                if current_section['title'] or current_section['content']:
                     sections.append(current_section)
                 
                 # Start new section
                 level = len(line) - len(line.lstrip('#'))
                 title = line.lstrip('#').strip()
                 current_section = {'level': level, 'title': title, 'content': []}
-            elif line:
+            elif line and not line.startswith('#'):
                 current_section['content'].append(line)
         
         # Add final section
-        if current_section['content']:
+        if current_section['title'] or current_section['content']:
             sections.append(current_section)
         
         return sections
     
     sections = parse_markdown_sections(context)
+    
+    print(f"DEBUG - Parsed {len(sections)} sections:")
+    for i, section in enumerate(sections):
+        print(f"  Section {i}: '{section['title']}' (level {section['level']}) - {len(section['content'])} lines")
+        if section['content']:
+            print(f"    Content preview: {' '.join(section['content'])[:100]}...")
     
     # Extract keywords from question
     question_keywords = [word.lower() for word in question_lower.split() 
@@ -460,9 +476,12 @@ def generate_answer(question: str, context: str, search_results: list) -> str:
                             'has', 'have', 'had', 'this', 'that', 'these', 'those', 'a', 'an'
                         ]]
     
+    print(f"DEBUG - Question keywords: {question_keywords}")
+    
     # Handle Yes/No questions first
     yes_no_indicators = ['is', 'are', 'does', 'do', 'can', 'will', 'should', 'has', 'have']
     if any(indicator in question_lower.split()[:3] for indicator in yes_no_indicators):
+        print("DEBUG - Detected yes/no question")
         # Find the most relevant section for yes/no questions
         best_section = None
         highest_score = 0
@@ -470,6 +489,7 @@ def generate_answer(question: str, context: str, search_results: list) -> str:
         for section in sections:
             section_text = f"{section['title']} {' '.join(section['content'])}".lower()
             score = sum(1 for keyword in question_keywords if keyword in section_text)
+            print(f"DEBUG - Section '{section['title']}' score: {score}")
             if score > highest_score:
                 highest_score = score
                 best_section = section
@@ -489,42 +509,55 @@ def generate_answer(question: str, context: str, search_results: list) -> str:
     
     # Special handling for technology/architecture questions
     if any(tech_word in question_lower for tech_word in ['technology', 'tech', 'framework', 'built', 'stack', 'architecture', 'development', 'programming', 'service', 'database', 'frontend', 'backend']):
+        print("DEBUG - Detected technology question")
         # Look for architecture or tech-related sections
         tech_sections = []
         for section in sections:
             section_title_lower = section['title'].lower()
             section_content = ' '.join(section['content']).lower()
             
-            if any(tech_term in section_title_lower or tech_term in section_content for tech_term in [
+            print(f"DEBUG - Checking section '{section['title']}' for tech content")
+            
+            # Check for direct keyword matches in title first
+            title_matches = sum(1 for keyword in question_keywords if keyword in section_title_lower)
+            content_matches = sum(1 for keyword in question_keywords if keyword in section_content)
+            
+            # High priority for exact title matches (e.g., "Backend" section for "backend" question)
+            if title_matches > 0:
+                print(f"DEBUG - Direct title match in '{section['title']}' with score {title_matches + 10}")
+                tech_sections.append((title_matches + 10, section))
+            # Medium priority for content matches
+            elif content_matches > 0:
+                print(f"DEBUG - Content match in '{section['title']}' with score {content_matches + 5}")
+                tech_sections.append((content_matches + 5, section))
+            # Lower priority for general tech terms
+            elif any(tech_term in section_title_lower or tech_term in section_content for tech_term in [
                 'architecture', 'frontend', 'backend', 'technology', 'service', 'database',
                 'application', 'layer', 'security', 'deployment', 'system', 'api',
                 'javascript', 'react', 'dojo', 'framework', 'microservices'
             ]):
-                tech_sections.append(section)
+                print(f"DEBUG - General tech match in '{section['title']}' with score 1")
+                tech_sections.append((1, section))
         
         if tech_sections:
-            # Find the most relevant tech section
-            best_tech_section = None
-            best_score = 0
+            # Sort by priority and find the best match
+            tech_sections.sort(reverse=True, key=lambda x: x[0])
+            best_tech_section = tech_sections[0][1]
             
-            for section in tech_sections:
-                section_text = f"{section['title']} {' '.join(section['content'])}".lower()
-                score = sum(1 for keyword in question_keywords if keyword in section_text)
-                if score > best_score:
-                    best_score = score
-                    best_tech_section = section
+            print(f"DEBUG - Selected tech section: '{best_tech_section['title']}' with priority {tech_sections[0][0]}")
             
             if best_tech_section:
                 content = ' '.join(best_tech_section['content'])
-                # Return section title and first relevant sentence
-                first_sentence = content.split('.')[0]
-                if len(first_sentence) > 10:
-                    return f"From the {best_tech_section['title']}: {first_sentence}."
-                else:
-                    # Get first substantial sentence
-                    sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 20]
-                    if sentences:
-                        return f"From the {best_tech_section['title']}: {sentences[0]}."
+                # If asking specifically about backend/frontend, return the whole section content
+                if any(specific in question_lower for specific in ['backend', 'frontend', 'technology stack']):
+                    # Return the full content for specific tech questions
+                    if content:
+                        return f"From the {best_tech_section['title']}: {content}"
+                
+                # For other tech questions, return first relevant sentence
+                sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 10]
+                if sentences:
+                    return f"From the {best_tech_section['title']}: {sentences[0]}."
     
     # General question handling - find most relevant section
     best_section = None
