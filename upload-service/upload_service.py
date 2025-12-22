@@ -172,6 +172,14 @@ async def upload_page():
                 <button class="upload-btn" onclick="getFileCount()" style="background-color: #6c757d;">
                     📊 Check Uploaded Files Count
                 </button>
+                <button class="upload-btn" onclick="listAllFiles()" style="background-color: #17a2b8; margin-left: 10px;">
+                    📋 List All Files
+                </button>
+            </div>
+
+            <div id="allFilesList" style="display: none; margin-top: 20px; background: #f8f9fa; padding: 20px; border-radius: 5px;">
+                <h3>📁 All Uploaded Files</h3>
+                <div id="allFilesContent"></div>
             </div>
 
             <div style="text-align: center; margin-top: 30px;">
@@ -269,6 +277,55 @@ async def upload_page():
                 } catch (error) {
                     showStatus('Error getting file count', 'error');
                 }
+            }
+
+            async function listAllFiles() {
+                try {
+                    showStatus('Loading file list...', 'info');
+                    const response = await fetch('/files/list');
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        displayFileList(data.files);
+                        showStatus(`Loaded ${data.count} files`, 'success');
+                    } else {
+                        showStatus('Error loading file list', 'error');
+                    }
+                } catch (error) {
+                    showStatus('Error loading file list', 'error');
+                }
+            }
+
+            function displayFileList(files) {
+                const allFilesList = document.getElementById('allFilesList');
+                const allFilesContent = document.getElementById('allFilesContent');
+                
+                if (files.length === 0) {
+                    allFilesContent.innerHTML = '<p>No files uploaded yet.</p>';
+                } else {
+                    let html = '<div class="files-grid">';
+                    files.forEach(file => {
+                        const modifiedDate = new Date(file.modified).toLocaleString();
+                        html += `
+                            <div class="file-item" style="margin-bottom: 10px; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <div>
+                                        <strong>📄 ${file.name}</strong>
+                                        <br><small style="color: #666;">Path: ${file.path}</small>
+                                    </div>
+                                    <div style="text-align: right;">
+                                        <div>${formatFileSize(file.size)}</div>
+                                        <small style="color: #666;">${modifiedDate}</small>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                    allFilesContent.innerHTML = html;
+                }
+                
+                allFilesList.style.display = 'block';
             }
 
             async function triggerDataLoader() {
