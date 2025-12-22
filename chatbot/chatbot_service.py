@@ -397,9 +397,9 @@ async def chat(request: QueryRequest):
             similarity_scores.append(result.score)
             context_parts.append(payload.get("content", ""))
         
-        # Generate answer based on context
-        context = "\n\n".join(context_parts[:3])  # Use top 3 results for context
-        answer = generate_answer(request.question, context)
+        # Generate answer based on context - use all relevant results
+        context = "\n\n".join(context_parts)  # Use all results for better context
+        answer = generate_answer(request.question, context, search_results)
         
         query_time = (datetime.now() - start_time).total_seconds()
         
@@ -414,36 +414,74 @@ async def chat(request: QueryRequest):
         logger.error(f"Error processing chat request: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
 
-def generate_answer(question: str, context: str) -> str:
+def generate_answer(question: str, context: str, search_results: list) -> str:
     """Generate an answer based on the question and context.
     This is a simple implementation - you could replace with a proper LLM later."""
     
     if not context.strip():
         return "I couldn't find relevant information to answer your question."
     
-    # Simple keyword-based answer generation
     question_lower = question.lower()
-    context_sentences = context.split('.')
     
-    # Find most relevant sentences
-    relevant_sentences = []
-    for sentence in context_sentences:
+    # If the question is about technology, return more comprehensive information
+    if any(tech_word in question_lower for tech_word in ['technology', 'tech', 'framework', 'built', 'stack', 'architecture']):
+        # Look for technology-related information across all results
+        tech_info = []
+        for result in search_results:
+            content = result.payload.get("content", "")
+            if any(word in content.lower() for word in ['javascript', 'react', 'dojo', 'framework', 'application', 'built', 'frontend', 'technology']):
+                tech_info.append(content.strip())
+        
+        if tech_info:
+            # Combine technology information
+            combined_tech = "\n\n".join(tech_info)
+            # Remove duplicates and clean up
+            sentences = []
+            for sentence in combined_tech.split('.'):
+                sentence = sentence.strip()
+                if sentence and sentence not in sentences:
+                    sentences.append(sentence)
+            
+            result = ". ".join(sentences[:5]) + "."  # Top 5 unique sentences
+            return result if len(result) > 50 else context[:500] + "..."
+    
+    # General question handling
+    context_sentences = []
+    for sentence in context.split('.'):
         sentence = sentence.strip()
-        if sentence and any(word in sentence.lower() for word in question_lower.split() if len(word) > 2):
-            relevant_sentences.append(sentence)
+        if sentence and len(sentence) > 10:  # Filter out very short fragments
+            context_sentences.append(sentence)
     
-    if relevant_sentences:
-        # Return the most relevant sentences as the answer
-        answer = ". ".join(relevant_sentences[:2])  # Top 2 sentences
-        if len(answer) > 500:
-            answer = answer[:500] + "..."
-        return answer + "."
+    # Find most relevant sentences based on keyword matching
+    question_keywords = [word.lower() for word in question_lower.split() if len(word) > 2 and word not in ['what', 'how', 'why', 'when', 'where', 'tell', 'about', 'the', 'and', 'or', 'but']]
+    
+    scored_sentences = []
+    for sentence in context_sentences:
+        sentence_lower = sentence.lower()
+        score = sum(1 for keyword in question_keywords if keyword in sentence_lower)
+        if score > 0:
+            scored_sentences.append((score, sentence))
+    
+    if scored_sentences:
+        # Sort by relevance score and take top sentences
+        scored_sentences.sort(reverse=True, key=lambda x: x[0])
+        top_sentences = [sentence for _, sentence in scored_sentences[:3]]
+        answer = ". ".join(top_sentences) + "."
+        
+        # Ensure answer is substantial
+        if len(answer) > 100:
+            return answer
+    
+    # Fallback: return first substantial part of context
+    if len(context) > 200:
+        # Find a good breaking point
+        break_point = context.find('. ', 200)
+        if break_point > 0:
+            return context[:break_point + 1]
+        else:
+            return context[:300] + "..."
     else:
-        # Fallback to first part of context
-        answer = context[:300]
-        if len(context) > 300:
-            answer += "..."
-        return f"Based on your documents: {answer}"
+        return context
 
 @app.get("/health")
 async def health_check():

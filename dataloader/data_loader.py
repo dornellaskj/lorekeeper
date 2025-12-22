@@ -36,8 +36,8 @@ class DataLoader:
         qdrant_port: int = 6333,
         collection_name: str = "documents",
         embedding_model: str = "all-MiniLM-L6-v2",
-        chunk_size: int = 500,
-        chunk_overlap: int = 50
+        chunk_size: int = 1000,  # Increased from 500
+        chunk_overlap: int = 200  # Increased from 50
     ):
         self.qdrant_host = qdrant_host
         self.qdrant_port = qdrant_port
@@ -135,10 +135,85 @@ class DataLoader:
             return ""
     
     def _chunk_text(self, text: str, file_path: str, file_name: str) -> List[DocumentChunk]:
-        """Split text into overlapping chunks."""
+        """Split text into overlapping chunks with intelligent boundaries."""
         chunks = []
         
-        # Simple character-based chunking
+        # First, try to split by paragraphs (double newlines)
+        paragraphs = text.split('\n\n')
+        
+        current_chunk = ""
+        chunk_index = 0
+        start_pos = 0
+        
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+            
+            # If adding this paragraph would exceed chunk size
+            if len(current_chunk) + len(para) + 2 > self.chunk_size and current_chunk:
+                # Save current chunk
+                if current_chunk.strip():
+                    chunk = DocumentChunk(
+                        content=current_chunk.strip(),
+                        file_path=file_path,
+                        file_name=file_name,
+                        chunk_index=chunk_index,
+                        metadata={
+                            'file_size': len(text),
+                            'chunk_start': start_pos,
+                            'chunk_end': start_pos + len(current_chunk)
+                        }
+                    )
+                    chunks.append(chunk)
+                    chunk_index += 1
+                
+                # Start new chunk with overlap
+                if len(current_chunk) > self.chunk_overlap:
+                    overlap_text = current_chunk[-self.chunk_overlap:]
+                    # Find a good break point in the overlap
+                    good_breaks = ['. ', '! ', '? ', '\n']
+                    best_break = 0
+                    for i, char_pair in enumerate(zip(overlap_text, overlap_text[1:])):
+                        if ''.join(char_pair) in good_breaks:
+                            best_break = i + 2
+                    
+                    current_chunk = overlap_text[best_break:] + "\n\n" + para
+                else:
+                    current_chunk = para
+                
+                start_pos = start_pos + len(current_chunk) - len(para) - 2
+            else:
+                # Add paragraph to current chunk
+                if current_chunk:
+                    current_chunk += "\n\n" + para
+                else:
+                    current_chunk = para
+        
+        # Add final chunk if there's remaining content
+        if current_chunk.strip():
+            chunk = DocumentChunk(
+                content=current_chunk.strip(),
+                file_path=file_path,
+                file_name=file_name,
+                chunk_index=chunk_index,
+                metadata={
+                    'file_size': len(text),
+                    'chunk_start': start_pos,
+                    'chunk_end': start_pos + len(current_chunk)
+                }
+            )
+            chunks.append(chunk)
+        
+        # If we got no chunks (text might be too short or no paragraphs), fall back to simple chunking
+        if not chunks:
+            chunks = self._simple_chunk_text(text, file_path, file_name)
+        
+        return chunks
+    
+    def _simple_chunk_text(self, text: str, file_path: str, file_name: str) -> List[DocumentChunk]:
+        """Fallback simple chunking method."""
+        chunks = []
         start = 0
         chunk_index = 0
         
@@ -148,11 +223,11 @@ class DataLoader:
             
             # Try to end at a sentence boundary if possible
             if end < len(text):
-                # Look for sentence endings within the last 100 characters
-                sentence_endings = ['. ', '! ', '? ', '\n\n']
+                # Look for sentence endings within the last 200 characters
+                sentence_endings = ['. ', '! ', '? ', '\n\n', '\n']
                 best_end = end
                 
-                for i in range(max(0, end - 100), end):
+                for i in range(max(0, end - 200), end):
                     for ending in sentence_endings:
                         if text[i:i+len(ending)] == ending:
                             best_end = i + len(ending)
