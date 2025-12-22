@@ -1,39 +1,35 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: data-loader-gpu
+  name: data-loader-cpu
   namespace: default
 spec:
   template:
     metadata:
       labels:
-        app: data-loader-gpu
+        app: data-loader-cpu
     spec:
       restartPolicy: Never
       containers:
       - name: data-loader
-        image: localhost:32000/lorekeeper/data-loader:latest
+        image: localhost:32000/lorekeeper/data-loader-cpu:latest
         imagePullPolicy: Always
         envFrom:
         - configMapRef:
-            name: data-loader-gpu-config
+            name: data-loader-config
         volumeMounts:
         - name: data-input
           mountPath: /data
         resources:
           requests:
             memory: "2Gi"
-            cpu: "500m"
-            nvidia.com/gpu: 1
+            cpu: "1000m"
           limits:
             memory: "4Gi"
             cpu: "2000m"
-            nvidia.com/gpu: 1
         env:
-        - name: NVIDIA_VISIBLE_DEVICES
-          value: "all"
-        - name: NVIDIA_DRIVER_CAPABILITIES
-          value: "compute,utility"
+        - name: CUDA_VISIBLE_DEVICES
+          value: ""  # Disable GPU for now
       volumes:
       - name: data-input
         persistentVolumeClaim:
