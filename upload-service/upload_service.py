@@ -516,9 +516,12 @@ async def trigger_data_loader_force():
     try:
         import subprocess
         
-        # Delete existing job if it exists
+        # Delete existing jobs if they exist
         subprocess.run([
             "kubectl", "delete", "job", "data-loader-cpu", "--ignore-not-found=true"
+        ], capture_output=True)
+        subprocess.run([
+            "kubectl", "delete", "job", "data-loader-force", "--ignore-not-found=true"
         ], capture_output=True)
         
         # Create new job with force config
@@ -530,13 +533,13 @@ async def trigger_data_loader_force():
             raise Exception(f"Failed to apply force config: {result.stderr}")
             
         result = subprocess.run([
-            "kubectl", "apply", "-f", "/app/k8s/data-loader-cpu-job.yaml"
+            "kubectl", "apply", "-f", "/app/k8s/data-loader-force-job.yaml"
         ], capture_output=True, text=True)
         
         if result.returncode != 0:
             raise Exception(f"Failed to create force job: {result.stderr}")
         
-        return {"message": "Force data loader job started! All files will be reprocessed. Check logs with: kubectl logs -f job/data-loader-cpu"}
+        return {"message": "Force data loader job started! All files will be reprocessed. Check logs with: kubectl logs -f job/data-loader-force"}
         
     except Exception as e:
         logger.error(f"Error triggering force data loader: {e}")
