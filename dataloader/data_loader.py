@@ -337,11 +337,32 @@ class DataLoader:
         processed_files_count = self._get_processed_files_count()
         logger.info(f"Already processed files in database: {processed_files_count}")
         
-        # Filter out already processed files (optional - can be disabled)
+        # Check for force reprocess flag
+        force_reprocess = os.getenv("FORCE_REPROCESS", "false").lower() == "true"
         skip_processed = os.getenv("SKIP_PROCESSED_FILES", "true").lower() == "true"
-        files_to_process = []
         
-        if skip_processed:
+        # If force reprocess is enabled, clear existing data and process all files
+        if force_reprocess:
+            logger.info("FORCE_REPROCESS enabled - clearing existing collection data")
+            try:
+                # Delete and recreate collection to clear all data
+                self.qdrant_client.delete_collection(self.collection_name)
+                logger.info(f"Deleted collection '{self.collection_name}'")
+                self._ensure_collection_exists()
+                logger.info(f"Recreated collection '{self.collection_name}'")
+            except Exception as e:
+                logger.warning(f"Could not clear collection (might not exist): {e}")
+                self._ensure_collection_exists()
+            
+            files_to_process = text_files
+            logger.info(f"Force processing all {len(files_to_process)} files")
+        
+        # Filter out already processed files (optional - can be disabled)
+        elif not skip_processed:
+            files_to_process = text_files
+            logger.info(f"Processing all {len(files_to_process)} files (skip check disabled)")
+        else:
+            files_to_process = []
             for file_path in text_files:
                 if self._is_file_already_processed(file_path):
                     logger.info(f"Skipping already processed file: {file_path.name}")
@@ -349,9 +370,6 @@ class DataLoader:
                     files_to_process.append(file_path)
             
             logger.info(f"Files to process: {len(files_to_process)} (skipped {len(text_files) - len(files_to_process)} already processed)")
-        else:
-            files_to_process = text_files
-            logger.info(f"Processing all {len(files_to_process)} files (skip check disabled)")
         
         if not files_to_process:
             logger.info("No new files to process!")

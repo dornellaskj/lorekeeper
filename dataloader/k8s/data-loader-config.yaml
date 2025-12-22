@@ -9,6 +9,6 @@ data:
   QDRANT_COLLECTION: "documents"
   DATA_FOLDER: "/data"
   EMBEDDING_MODEL: "all-MiniLM-L6-v2"
-  CHUNK_SIZE: "500"
-  CHUNK_OVERLAP: "50"
+  CHUNK_SIZE: "1000"  # Updated to new chunking size
+  CHUNK_OVERLAP: "200"  # Updated to new chunking overlap
   SKIP_PROCESSED_FILES: "true"  # Set to "false" to reprocess all files
