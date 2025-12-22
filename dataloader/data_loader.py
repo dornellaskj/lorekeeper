@@ -298,6 +298,8 @@ class DataLoader:
         except Exception as e:
             logger.warning(f"Could not count processed files: {e}")
             return 0
+
+    def _embed_chunks(self, chunks: List[DocumentChunk]) -> np.ndarray:
         """Generate embeddings for chunks."""
         texts = [chunk.content for chunk in chunks]
         logger.info(f"Generating embeddings for {len(texts)} chunks")
