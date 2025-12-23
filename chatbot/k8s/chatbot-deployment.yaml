@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: chatbot
-        image: chatbot-service:latest
+        image: lorekeeper-chatbot:latest
         imagePullPolicy: Never  # Use local image
         ports:
         - containerPort: 8081
