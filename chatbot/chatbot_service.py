@@ -366,13 +366,32 @@ async def chat(request: QueryRequest):
         # Generate embedding for the question
         question_embedding = embedding_model.encode(request.question).tolist()
         
-        # Search in Qdrant
+        # Search in Qdrant with improved strategy for diverse results
         search_results = qdrant_client.search(
             collection_name=COLLECTION_NAME,
             query_vector=question_embedding,
-            limit=request.max_results,
-            score_threshold=request.threshold
+            limit=min(request.max_results * 2, 10),  # Get more results initially
+            score_threshold=max(request.threshold - 0.1, 0.2)  # Lower threshold for more diversity
         )
+        
+        # Filter and diversify results
+        filtered_results = []
+        seen_content = set()
+        
+        for result in search_results:
+            content = result.payload.get("content", "").strip()
+            
+            # Skip very similar content (simple deduplication)
+            content_start = content[:100].lower()
+            if content_start not in seen_content:
+                seen_content.add(content_start)
+                filtered_results.append(result)
+                
+                # Stop when we have enough diverse results
+                if len(filtered_results) >= request.max_results:
+                    break
+        
+        search_results = filtered_results
         
         if not search_results:
             return ChatResponse(
@@ -425,8 +444,8 @@ async def chat(request: QueryRequest):
         raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
 
 def generate_answer(question: str, context: str, search_results: list) -> str:
-    """Generate an answer based on the question and context.
-    This is a simple implementation - you could replace with a proper LLM later."""
+    """Generate an enhanced answer based on the question and context.
+    This implementation provides more nuanced, analytical responses."""
     
     if not context.strip():
         return "I couldn't find relevant information to answer your question."
@@ -464,8 +483,6 @@ def generate_answer(question: str, context: str, search_results: list) -> str:
     print(f"DEBUG - Parsed {len(sections)} sections:")
     for i, section in enumerate(sections):
         print(f"  Section {i}: '{section['title']}' (level {section['level']}) - {len(section['content'])} lines")
-        if section['content']:
-            print(f"    Content preview: {' '.join(section['content'])[:100]}...")
     
     # Extract keywords from question
     question_keywords = [word.lower() for word in question_lower.split() 
@@ -478,140 +495,249 @@ def generate_answer(question: str, context: str, search_results: list) -> str:
     
     print(f"DEBUG - Question keywords: {question_keywords}")
     
-    # Handle Yes/No questions first
-    yes_no_indicators = ['is', 'are', 'does', 'do', 'can', 'will', 'should', 'has', 'have']
-    if any(indicator in question_lower.split()[:3] for indicator in yes_no_indicators):
-        print("DEBUG - Detected yes/no question")
-        # Find the most relevant section for yes/no questions
-        best_section = None
-        highest_score = 0
-        
-        for section in sections:
-            section_text = f"{section['title']} {' '.join(section['content'])}".lower()
-            score = sum(1 for keyword in question_keywords if keyword in section_text)
-            print(f"DEBUG - Section '{section['title']}' score: {score}")
-            if score > highest_score:
-                highest_score = score
-                best_section = section
-        
-        if best_section and highest_score > 0:
-            section_content = ' '.join(best_section['content'])
-            
-            # For B2B questions
-            if 'b2b' in question_lower or 'business to business' in question_lower:
-                if any(term in section_content.lower() for term in ['business to business', 'b2b', 'business']):
-                    return f"Yes, based on the {best_section['title']} section: {section_content.split('.')[0]}."
-            
-            # General yes/no answer
-            first_sentence = section_content.split('.')[0]
-            if first_sentence:
-                return f"Yes, according to the {best_section['title']}: {first_sentence}."
+    # Enhanced response strategies based on question type
     
-    # Special handling for technology/architecture questions
-    if any(tech_word in question_lower for tech_word in ['technology', 'tech', 'framework', 'built', 'stack', 'architecture', 'development', 'programming', 'service', 'database', 'frontend', 'backend']):
-        print("DEBUG - Detected technology question")
-        # Look for architecture or tech-related sections
-        tech_sections = []
-        for section in sections:
-            section_title_lower = section['title'].lower()
-            section_content = ' '.join(section['content']).lower()
-            
-            print(f"DEBUG - Checking section '{section['title']}' for tech content")
-            
-            # Check for direct keyword matches in title first
-            title_matches = sum(1 for keyword in question_keywords if keyword in section_title_lower)
-            content_matches = sum(1 for keyword in question_keywords if keyword in section_content)
-            
-            # High priority for exact title matches (e.g., "Backend" section for "backend" question)
-            if title_matches > 0:
-                print(f"DEBUG - Direct title match in '{section['title']}' with score {title_matches + 10}")
-                tech_sections.append((title_matches + 10, section))
-            # Medium priority for content matches
-            elif content_matches > 0:
-                print(f"DEBUG - Content match in '{section['title']}' with score {content_matches + 5}")
-                tech_sections.append((content_matches + 5, section))
-            # Lower priority for general tech terms
-            elif any(tech_term in section_title_lower or tech_term in section_content for tech_term in [
-                'architecture', 'frontend', 'backend', 'technology', 'service', 'database',
-                'application', 'layer', 'security', 'deployment', 'system', 'api',
-                'javascript', 'react', 'dojo', 'framework', 'microservices'
-            ]):
-                print(f"DEBUG - General tech match in '{section['title']}' with score 1")
-                tech_sections.append((1, section))
+    # Strategy 1: Comprehensive overview questions
+    if any(word in question_lower for word in ['about', 'overview', 'tell me', 'explain', 'describe', 'what are']):
+        return generate_comprehensive_answer(sections, question_keywords, question)
+    
+    # Strategy 2: Specific detail questions  
+    elif any(word in question_lower for word in ['how', 'why', 'when', 'which', 'specific']):
+        return generate_detailed_answer(sections, question_keywords, question)
         
-        if tech_sections:
-            # Sort by priority and find the best match
-            tech_sections.sort(reverse=True, key=lambda x: x[0])
-            best_tech_section = tech_sections[0][1]
-            
-            print(f"DEBUG - Selected tech section: '{best_tech_section['title']}' with priority {tech_sections[0][0]}")
-            
-            if best_tech_section:
-                content = ' '.join(best_tech_section['content'])
-                # If asking specifically about backend/frontend, return the whole section content
-                if any(specific in question_lower for specific in ['backend', 'frontend', 'technology stack']):
-                    # Return the full content for specific tech questions
-                    if content:
-                        return f"From the {best_tech_section['title']}: {content}"
+    # Strategy 3: Comparative or analytical questions
+    elif any(word in question_lower for word in ['different', 'types', 'kinds', 'compare', 'versus', 'options']):
+        return generate_analytical_answer(sections, question_keywords, question)
+        
+    # Strategy 4: Yes/No questions with elaboration
+    elif any(indicator in question_lower.split()[:3] for indicator in ['is', 'are', 'does', 'do', 'can', 'will']):
+        return generate_yesno_answer(sections, question_keywords, question)
+    
+    # Default: Contextual synthesis
+    else:
+        return generate_contextual_answer(sections, question_keywords, question)
+
+def generate_comprehensive_answer(sections, keywords, question):
+    """Generate a comprehensive overview combining multiple relevant sections."""
+    relevant_sections = []
+    
+    for section in sections:
+        section_text = f"{section['title']} {' '.join(section['content'])}".lower()
+        keyword_matches = sum(1 for keyword in keywords if keyword in section_text)
+        
+        if keyword_matches > 0:
+            relevant_sections.append({
+                'section': section,
+                'score': keyword_matches,
+                'content': ' '.join(section['content'])
+            })
+    
+    if not relevant_sections:
+        return "I found information about this topic, but it doesn't directly address your specific question."
+    
+    # Sort by relevance
+    relevant_sections.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Build comprehensive answer
+    answer_parts = []
+    
+    # Primary definition/overview
+    main_section = relevant_sections[0]
+    first_sentences = main_section['content'].split('.')[0:2]
+    answer_parts.append(' '.join(first_sentences).strip() + '.')
+    
+    # Add specific details from other sections
+    for section_info in relevant_sections[1:3]:  # Include up to 2 additional sections
+        section = section_info['section']
+        content = section_info['content']
+        
+        if section['title'] and content:
+            # Extract most relevant sentence from this section
+            sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 20]
+            if sentences:
+                best_sentence = sentences[0]
+                for sentence in sentences:
+                    if any(keyword in sentence.lower() for keyword in keywords):
+                        best_sentence = sentence
+                        break
                 
-                # For other tech questions, return first relevant sentence
-                sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 10]
-                if sentences:
-                    return f"From the {best_tech_section['title']}: {sentences[0]}."
+                answer_parts.append(f"In terms of {section['title'].lower()}: {best_sentence}.")
     
-    # General question handling - find most relevant section
+    return ' '.join(answer_parts)
+
+def generate_detailed_answer(sections, keywords, question):
+    """Generate detailed answer focusing on specific aspects."""
+    question_lower = question.lower()
+    
+    # Find the most specific section
+    best_section = None
+    highest_specificity = 0
+    
+    for section in sections:
+        section_text = f"{section['title']} {' '.join(section['content'])}".lower()
+        
+        # Calculate specificity score
+        keyword_matches = sum(2 for keyword in keywords if keyword in section['title'].lower())
+        keyword_matches += sum(1 for keyword in keywords if keyword in section_text)
+        
+        if keyword_matches > highest_specificity:
+            highest_specificity = keyword_matches
+            best_section = section
+    
+    if not best_section:
+        return "I couldn't find specific details about that aspect in the available information."
+    
+    content = ' '.join(best_section['content'])
+    sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 15]
+    
+    # For "how" questions, look for process or method information
+    if question_lower.startswith('how'):
+        process_words = ['by', 'through', 'via', 'using', 'with', 'process', 'method', 'approach']
+        for sentence in sentences:
+            if any(word in sentence.lower() for word in process_words):
+                return f"From {best_section['title']}: {sentence}."
+    
+    # For "why" questions, look for reasons or explanations
+    elif question_lower.startswith('why'):
+        reason_words = ['because', 'since', 'due to', 'reason', 'purpose', 'goal', 'objective']
+        for sentence in sentences:
+            if any(word in sentence.lower() for word in reason_words):
+                return f"From {best_section['title']}: {sentence}."
+    
+    # Default detailed response
+    if sentences:
+        detailed_response = '. '.join(sentences[0:2])  # First two sentences for detail
+        return f"From {best_section['title']}: {detailed_response}."
+    
+    return f"From {best_section['title']}: {content}"
+
+def generate_analytical_answer(sections, keywords, question):
+    """Generate analytical answer comparing different aspects or types."""
+    # Look for sections that contain categories, types, or comparisons
+    category_sections = []
+    
+    for section in sections:
+        title_lower = section['title'].lower()
+        content = ' '.join(section['content']).lower()
+        
+        # Check for categorical information
+        if any(word in title_lower for word in ['types', 'kinds', 'categories', 'different']) or \
+           any(word in content for word in ['include', 'such as', 'example', 'different types']):
+            
+            keyword_matches = sum(1 for keyword in keywords if keyword in f"{title_lower} {content}")
+            if keyword_matches > 0:
+                category_sections.append({
+                    'section': section,
+                    'score': keyword_matches,
+                    'content': ' '.join(section['content'])
+                })
+    
+    if not category_sections:
+        return generate_comprehensive_answer(sections, keywords, question)
+    
+    # Sort by relevance
+    category_sections.sort(key=lambda x: x['score'], reverse=True)
+    
+    answer_parts = []
+    
+    for section_info in category_sections[:3]:  # Top 3 most relevant
+        section = section_info['section']
+        content = section_info['content']
+        
+        if section['title']:
+            # Extract bullet points or list items
+            lines = content.split('\n')
+            items = []
+            
+            for line in lines:
+                if any(marker in line for marker in ['- **', '- ', '• ', '*']):
+                    items.append(line.strip())
+                elif ':' in line and len(line) < 100:  # Short descriptive lines
+                    items.append(line.strip())
+            
+            if items:
+                formatted_items = '; '.join(items[:3])  # Top 3 items
+                answer_parts.append(f"{section['title']}: {formatted_items}")
+            else:
+                # Fallback to sentences
+                sentences = content.split('.')[0:2]
+                answer_parts.append(f"{section['title']}: {'. '.join(sentences)}.")
+    
+    return '. '.join(answer_parts) if answer_parts else generate_comprehensive_answer(sections, keywords, question)
+
+def generate_yesno_answer(sections, keywords, question):
+    """Generate yes/no answer with supporting explanation."""
+    # Find most relevant section
     best_section = None
     highest_score = 0
     
     for section in sections:
         section_text = f"{section['title']} {' '.join(section['content'])}".lower()
+        score = sum(1 for keyword in keywords if keyword in section_text)
         
-        # Score based on keyword matches
-        keyword_score = sum(1 for keyword in question_keywords if keyword in section_text)
-        
-        # Bonus for title matches
-        title_score = sum(2 for keyword in question_keywords if keyword in section['title'].lower())
-        
-        total_score = keyword_score + title_score
-        if total_score > highest_score:
-            highest_score = total_score
+        if score > highest_score:
+            highest_score = score
             best_section = section
     
-    if best_section and highest_score > 0:
-        content = ' '.join(best_section['content'])
+    if not best_section or highest_score == 0:
+        return "I don't have enough information to definitively answer that yes/no question."
+    
+    content = ' '.join(best_section['content'])
+    
+    # Determine yes/no based on content
+    question_lower = question.lower()
+    positive_indicators = ['yes', 'true', 'can', 'will', 'does', 'is', 'are']
+    
+    # Simple heuristic: if the content contains information about the topic, it's likely "yes"
+    if any(keyword in content.lower() for keyword in keywords):
+        first_sentence = content.split('.')[0].strip()
+        return f"Yes, according to the information about {best_section['title']}: {first_sentence}."
+    else:
+        return f"Based on the available information about {best_section['title']}, I cannot confirm this."
+
+def generate_contextual_answer(sections, keywords, question):
+    """Generate contextual answer by synthesizing information."""
+    # Find all relevant sections
+    relevant_info = []
+    
+    for section in sections:
+        section_text = f"{section['title']} {' '.join(section['content'])}".lower()
+        keyword_matches = sum(1 for keyword in keywords if keyword in section_text)
         
-        # Find most relevant sentence within the section
-        sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 15]
+        if keyword_matches > 0:
+            relevant_info.append({
+                'title': section['title'],
+                'content': ' '.join(section['content']),
+                'matches': keyword_matches
+            })
+    
+    if not relevant_info:
+        return "I couldn't find information directly related to your question in the available documents."
+    
+    # Sort by relevance
+    relevant_info.sort(key=lambda x: x['matches'], reverse=True)
+    
+    # Create contextual response
+    main_info = relevant_info[0]
+    
+    # Start with most relevant information
+    sentences = [s.strip() for s in main_info['content'].split('.') if len(s.strip()) > 15]
+    main_sentence = sentences[0] if sentences else main_info['content']
+    
+    response = f"Based on the information about {main_info['title']}: {main_sentence}."
+    
+    # Add context from other relevant sections
+    if len(relevant_info) > 1:
+        additional_context = []
+        for info in relevant_info[1:2]:  # Add one more piece of context
+            context_sentence = info['content'].split('.')[0].strip()
+            if context_sentence and len(context_sentence) > 20:
+                additional_context.append(f"Additionally, regarding {info['title']}: {context_sentence}.")
         
-        if sentences:
-            # Score sentences within the section
-            best_sentence = sentences[0]
-            best_sentence_score = 0
-            
-            for sentence in sentences:
-                sentence_lower = sentence.lower()
-                score = sum(1 for keyword in question_keywords if keyword in sentence_lower)
-                if score > best_sentence_score:
-                    best_sentence_score = score
-                    best_sentence = sentence
-            
-            # Return with section context
-            if not best_sentence.endswith(('.', '!', '?')):
-                best_sentence += '.'
-            
-            if best_section['title']:
-                return f"From the {best_section['title']}: {best_sentence}"
-            else:
-                return best_sentence
+        if additional_context:
+            response += " " + " ".join(additional_context)
     
-    # Fallback to original logic if no sections found
-    clean_context = context.replace('#', '').strip()
-    sentences = [s.strip() for s in clean_context.split('.') if len(s.strip()) > 15]
-    
-    if sentences:
-        return sentences[0] + ('.' if not sentences[0].endswith(('.', '!', '?')) else '')
-    
-    return clean_context[:300] + ('...' if len(clean_context) > 300 else '')
+    return response
 
 @app.get("/health")
 async def health_check():
