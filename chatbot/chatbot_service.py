@@ -505,7 +505,11 @@ def generate_answer(question: str, context: str, search_results: list) -> str:
     elif any(word in question_lower for word in ['different', 'types', 'kinds', 'categories', 'compare', 'versus', 'options']):
         return generate_analytical_answer(sections, question_keywords, question)
         
-    # Strategy 3: Challenge/problem questions
+    # Strategy 3: Retailer needs/wants questions
+    elif any(word in question_lower for word in ['want', 'wants', 'need', 'needs', 'require', 'looking for', 'seeking']):
+        return generate_needs_answer(sections, question_keywords, question)
+        
+    # Strategy 4: Challenge/problem questions
     elif any(word in question_lower for word in ['challenges', 'problems', 'issues', 'difficulties', 'pain points']):
         return generate_challenge_answer(sections, question_keywords, question)
         
@@ -535,12 +539,14 @@ def generate_seasonal_answer(sections, keywords, question):
         
         # Look for seasonal content
         seasonal_terms = ['seasonal', 'spring', 'summer', 'fall', 'winter', 'holiday', 'timing', 'calendar']
-        if any(term in title_lower or term in content for term in seasonal_terms):
+        seasonal_score = sum(1 for term in seasonal_terms if term in title_lower or term in content)
+        
+        if seasonal_score > 0:
             keyword_matches = sum(1 for keyword in keywords if keyword in f"{title_lower} {content}")
             seasonal_sections.append({
                 'section': section,
-                'score': keyword_matches + 2,  # Bonus for seasonal relevance
-                'content': ' '.join(section['content'])
+                'score': keyword_matches + seasonal_score,
+                'content': ' '.join(section['content']).strip()
             })
     
     if not seasonal_sections:
@@ -549,21 +555,95 @@ def generate_seasonal_answer(sections, keywords, question):
     # Sort by relevance
     seasonal_sections.sort(key=lambda x: x['score'], reverse=True)
     
-    # Build seasonal-focused response
+    # Extract seasonal information from the best matching section
     main_section = seasonal_sections[0]
     content = main_section['content']
     
-    # Look for specific seasonal patterns
+    # Look for structured seasonal content
+    lines = content.split('\n')
+    seasonal_info = []
+    
+    current_category = None
+    for line in lines:
+        line = line.strip()
+        
+        # Check for seasonal section headers
+        if any(term in line.lower() for term in ['spring', 'summer', 'fall', 'winter', 'seasonal']):
+            if line.startswith('###') or line.startswith('##'):
+                current_category = line.replace('#', '').strip()
+            elif line.startswith('- **') and ':' in line:
+                # Extract bullet point information
+                clean_line = line.replace('- **', '').replace('**:', ':')
+                if current_category:
+                    seasonal_info.append(f"{current_category}: {clean_line}")
+                else:
+                    seasonal_info.append(clean_line)
+    
+    if seasonal_info:
+        # Format the seasonal information nicely
+        if len(seasonal_info) <= 3:
+            response = f"Seasonal operations include: {'; '.join(seasonal_info)}."
+        else:
+            response = f"Key seasonal aspects: {'; '.join(seasonal_info[:3])} (and {len(seasonal_info)-3} more considerations)."
+    else:
+        # Fallback to sentences containing seasonal terms
+        sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 20]
+        seasonal_sentences = []
+        
+        for sentence in sentences:
+            if any(term in sentence.lower() for term in ['spring', 'summer', 'fall', 'winter', 'seasonal', 'holiday']):
+                seasonal_sentences.append(sentence)
+        
+        if seasonal_sentences:
+            response = f"Regarding seasonal operations: {'. '.join(seasonal_sentences[:2])}."
+        else:
+            response = f"From {main_section['section']['title']}: {sentences[0] if sentences else content}."
+    
+    return response
+
+def generate_needs_answer(sections, keywords, question):
+    """Generate answer focused on what retailers want/need."""
+    needs_sections = []
+    
+    for section in sections:
+        title_lower = section['title'].lower()
+        content = ' '.join(section['content']).lower()
+        
+        # Look for needs/wants related content
+        needs_terms = ['want', 'need', 'goal', 'objective', 'motivation', 'desire', 'require', 'seek']
+        needs_score = sum(1 for term in needs_terms if term in title_lower or term in content)
+        
+        if needs_score > 0 or 'need' in title_lower or 'want' in title_lower:
+            keyword_matches = sum(1 for keyword in keywords if keyword in f"{title_lower} {content}")
+            needs_sections.append({
+                'section': section,
+                'score': keyword_matches + needs_score,
+                'content': ' '.join(section['content']).strip()
+            })
+    
+    if not needs_sections:
+        return "I don't have specific information about retailer needs and wants in the current documents."
+    
+    # Sort by relevance
+    needs_sections.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Extract needs-focused information
+    main_section = needs_sections[0]
+    content = main_section['content']
+    
+    # Look for goal/need oriented sentences
     sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 20]
-    seasonal_sentences = []
+    need_sentences = []
     
     for sentence in sentences:
-        if any(term in sentence.lower() for term in ['spring', 'summer', 'fall', 'winter', 'seasonal', 'holiday', 'timing']):
-            seasonal_sentences.append(sentence)
+        sentence_lower = sentence.lower()
+        if any(term in sentence_lower for term in ['want', 'need', 'goal', 'seek', 'require', 'desire', 'motivation']):
+            need_sentences.append(sentence)
     
-    if seasonal_sentences:
-        response = f"Regarding seasonal operations: {'. '.join(seasonal_sentences[:3])}."
+    if need_sentences:
+        response = f"Retailer needs and goals: {'. '.join(need_sentences[:2])}."
     else:
+        # Look for any section about retailer objectives
         response = f"From {main_section['section']['title']}: {sentences[0] if sentences else content}."
     
     return response
@@ -790,11 +870,20 @@ def generate_analytical_answer(sections, keywords, question):
                     structured_items.append(line)
             
             if structured_items:
+                # Remove duplicates while preserving order
+                unique_items = []
+                seen = set()
+                for item in structured_items:
+                    item_key = item.lower().strip()
+                    if item_key not in seen and len(item) > 10:
+                        unique_items.append(item)
+                        seen.add(item_key)
+                
                 # Format structured items nicely
-                if len(structured_items) <= 3:
-                    formatted_items = '; '.join(structured_items)
+                if len(unique_items) <= 3:
+                    formatted_items = '; '.join(unique_items)
                 else:
-                    formatted_items = '; '.join(structured_items[:3]) + f" (and {len(structured_items)-3} more)"
+                    formatted_items = '; '.join(unique_items[:3]) + f" (and {len(unique_items)-3} more)"
                 
                 answer_parts.append(f"Regarding {section['title']}: {formatted_items}")
             else:
