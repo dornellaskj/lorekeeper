@@ -497,25 +497,132 @@ def generate_answer(question: str, context: str, search_results: list) -> str:
     
     # Enhanced response strategies based on question type
     
-    # Strategy 1: Comprehensive overview questions
-    if any(word in question_lower for word in ['about', 'overview', 'tell me', 'explain', 'describe', 'what are']):
+    # Strategy 1: Seasonal/temporal questions (high priority)
+    if any(word in question_lower for word in ['seasonal', 'seasonally', 'season', 'spring', 'summer', 'fall', 'winter', 'holiday', 'timing']):
+        return generate_seasonal_answer(sections, question_keywords, question)
+    
+    # Strategy 2: Categorical/types questions  
+    elif any(word in question_lower for word in ['different', 'types', 'kinds', 'categories', 'compare', 'versus', 'options']):
+        return generate_analytical_answer(sections, question_keywords, question)
+        
+    # Strategy 3: Challenge/problem questions
+    elif any(word in question_lower for word in ['challenges', 'problems', 'issues', 'difficulties', 'pain points']):
+        return generate_challenge_answer(sections, question_keywords, question)
+        
+    # Strategy 4: Comprehensive overview questions
+    elif any(word in question_lower for word in ['about', 'overview', 'tell me', 'explain', 'describe', 'what are']):
         return generate_comprehensive_answer(sections, question_keywords, question)
     
-    # Strategy 2: Specific detail questions  
+    # Strategy 5: Specific detail questions  
     elif any(word in question_lower for word in ['how', 'why', 'when', 'which', 'specific']):
         return generate_detailed_answer(sections, question_keywords, question)
         
-    # Strategy 3: Comparative, analytical, or categorical questions
-    elif any(word in question_lower for word in ['different', 'types', 'kinds', 'compare', 'versus', 'options', 'challenges', 'seasonal', 'problems', 'issues', 'difficulties', 'pain points']):
-        return generate_analytical_answer(sections, question_keywords, question)
-        
-    # Strategy 4: Yes/No questions with elaboration
+    # Strategy 6: Yes/No questions with elaboration
     elif any(indicator in question_lower.split()[:3] for indicator in ['is', 'are', 'does', 'do', 'can', 'will']):
         return generate_yesno_answer(sections, question_keywords, question)
     
     # Default: Contextual synthesis
     else:
         return generate_contextual_answer(sections, question_keywords, question)
+
+def generate_seasonal_answer(sections, keywords, question):
+    """Generate answer focused on seasonal/temporal aspects."""
+    seasonal_sections = []
+    
+    for section in sections:
+        title_lower = section['title'].lower()
+        content = ' '.join(section['content']).lower()
+        
+        # Look for seasonal content
+        seasonal_terms = ['seasonal', 'spring', 'summer', 'fall', 'winter', 'holiday', 'timing', 'calendar']
+        if any(term in title_lower or term in content for term in seasonal_terms):
+            keyword_matches = sum(1 for keyword in keywords if keyword in f"{title_lower} {content}")
+            seasonal_sections.append({
+                'section': section,
+                'score': keyword_matches + 2,  # Bonus for seasonal relevance
+                'content': ' '.join(section['content'])
+            })
+    
+    if not seasonal_sections:
+        return "I don't have specific seasonal information available in the current documents."
+    
+    # Sort by relevance
+    seasonal_sections.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Build seasonal-focused response
+    main_section = seasonal_sections[0]
+    content = main_section['content']
+    
+    # Look for specific seasonal patterns
+    sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 20]
+    seasonal_sentences = []
+    
+    for sentence in sentences:
+        if any(term in sentence.lower() for term in ['spring', 'summer', 'fall', 'winter', 'seasonal', 'holiday', 'timing']):
+            seasonal_sentences.append(sentence)
+    
+    if seasonal_sentences:
+        response = f"Regarding seasonal operations: {'. '.join(seasonal_sentences[:3])}."
+    else:
+        response = f"From {main_section['section']['title']}: {sentences[0] if sentences else content}."
+    
+    return response
+
+def generate_challenge_answer(sections, keywords, question):
+    """Generate answer focused on challenges and problems."""
+    challenge_sections = []
+    
+    for section in sections:
+        title_lower = section['title'].lower()
+        content = ' '.join(section['content']).lower()
+        
+        # Look for challenge/problem content
+        challenge_terms = ['challenge', 'problem', 'issue', 'difficulty', 'pain point', 'barrier', 'obstacle']
+        if any(term in title_lower or term in content for term in challenge_terms):
+            keyword_matches = sum(1 for keyword in keywords if keyword in f"{title_lower} {content}")
+            challenge_sections.append({
+                'section': section,
+                'score': keyword_matches + 2,  # Bonus for challenge relevance
+                'content': ' '.join(section['content'])
+            })
+    
+    if not challenge_sections:
+        return "I don't have specific information about challenges in the current documents."
+    
+    # Sort by relevance
+    challenge_sections.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Build challenge-focused response
+    main_section = challenge_sections[0]
+    content = main_section['content']
+    
+    # Extract bullet points about challenges
+    lines = content.split('\n')
+    challenge_points = []
+    
+    for line in lines:
+        line_lower = line.lower()
+        if any(term in line_lower for term in ['challenge', 'problem', 'pain point', 'difficulty']) and \
+           any(marker in line for marker in ['- ', '• ', '* ', '-']):
+            clean_line = line.strip().lstrip('- •*').strip()
+            challenge_points.append(clean_line)
+    
+    if challenge_points:
+        response = f"Key challenges include: {'; '.join(challenge_points[:3])}."
+    else:
+        # Fallback to relevant sentences
+        sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 20]
+        challenge_sentences = []
+        for sentence in sentences:
+            if any(term in sentence.lower() for term in ['challenge', 'problem', 'difficulty', 'pain']):
+                challenge_sentences.append(sentence)
+        
+        if challenge_sentences:
+            response = f"Regarding challenges: {'. '.join(challenge_sentences[:2])}."
+        else:
+            response = f"From {main_section['section']['title']}: {sentences[0] if sentences else content}."
+    
+    return response
 
 def generate_comprehensive_answer(sections, keywords, question):
     """Generate a comprehensive overview combining multiple relevant sections."""
