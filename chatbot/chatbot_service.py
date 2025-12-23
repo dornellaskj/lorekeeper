@@ -409,9 +409,9 @@ async def chat(request: QueryRequest):
         for result in search_results:
             payload = result.payload
             sources.append({
-                "filename": payload.get("filename", "Unknown"),
+                "filename": payload.get("file_name", "Unknown"),  # Fixed: use file_name instead of filename
                 "content": payload.get("content", ""),
-                "chunk_id": payload.get("chunk_id", 0)
+                "chunk_id": payload.get("chunk_index", 0)  # Fixed: use chunk_index instead of chunk_id
             })
             similarity_scores.append(result.score)
             context_parts.append(payload.get("content", ""))
