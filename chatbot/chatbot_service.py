@@ -505,8 +505,8 @@ def generate_answer(question: str, context: str, search_results: list) -> str:
     elif any(word in question_lower for word in ['how', 'why', 'when', 'which', 'specific']):
         return generate_detailed_answer(sections, question_keywords, question)
         
-    # Strategy 3: Comparative or analytical questions
-    elif any(word in question_lower for word in ['different', 'types', 'kinds', 'compare', 'versus', 'options']):
+    # Strategy 3: Comparative, analytical, or categorical questions
+    elif any(word in question_lower for word in ['different', 'types', 'kinds', 'compare', 'versus', 'options', 'challenges', 'seasonal', 'problems', 'issues', 'difficulties', 'pain points']):
         return generate_analytical_answer(sections, question_keywords, question)
         
     # Strategy 4: Yes/No questions with elaboration
@@ -529,7 +529,7 @@ def generate_comprehensive_answer(sections, keywords, question):
             relevant_sections.append({
                 'section': section,
                 'score': keyword_matches,
-                'content': ' '.join(section['content'])
+                'content': ' '.join(section['content']).strip()
             })
     
     if not relevant_sections:
@@ -543,25 +543,41 @@ def generate_comprehensive_answer(sections, keywords, question):
     
     # Primary definition/overview
     main_section = relevant_sections[0]
-    first_sentences = main_section['content'].split('.')[0:2]
-    answer_parts.append(' '.join(first_sentences).strip() + '.')
+    content = main_section['content']
     
-    # Add specific details from other sections
+    # Get complete sentences, not fragments
+    sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 20]
+    if sentences:
+        # Use first 1-2 complete sentences for overview
+        overview = '. '.join(sentences[0:2])
+        if not overview.endswith('.'):
+            overview += '.'
+        answer_parts.append(overview)
+    
+    # Add specific details from other relevant sections
     for section_info in relevant_sections[1:3]:  # Include up to 2 additional sections
         section = section_info['section']
-        content = section_info['content']
+        section_content = section_info['content']
         
-        if section['title'] and content:
-            # Extract most relevant sentence from this section
-            sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 20]
-            if sentences:
-                best_sentence = sentences[0]
-                for sentence in sentences:
-                    if any(keyword in sentence.lower() for keyword in keywords):
+        if section['title'] and section_content:
+            # Extract most relevant complete sentence from this section
+            section_sentences = [s.strip() for s in section_content.split('.') if len(s.strip()) > 25]
+            if section_sentences:
+                best_sentence = section_sentences[0]
+                
+                # Find sentence with most keyword matches
+                for sentence in section_sentences[0:3]:  # Check first 3 sentences
+                    sentence_matches = sum(1 for keyword in keywords if keyword in sentence.lower())
+                    if sentence_matches > 0:
                         best_sentence = sentence
                         break
                 
-                answer_parts.append(f"In terms of {section['title'].lower()}: {best_sentence}.")
+                if not best_sentence.endswith('.'):
+                    best_sentence += '.'
+                
+                # Only add if it provides new information
+                if best_sentence.lower() not in answer_parts[0].lower():
+                    answer_parts.append(f"Additionally, {best_sentence}")
     
     return ' '.join(answer_parts)
 
@@ -613,6 +629,8 @@ def generate_detailed_answer(sections, keywords, question):
 
 def generate_analytical_answer(sections, keywords, question):
     """Generate analytical answer comparing different aspects or types."""
+    question_lower = question.lower()
+    
     # Look for sections that contain categories, types, or comparisons
     category_sections = []
     
@@ -620,16 +638,21 @@ def generate_analytical_answer(sections, keywords, question):
         title_lower = section['title'].lower()
         content = ' '.join(section['content']).lower()
         
-        # Check for categorical information
-        if any(word in title_lower for word in ['types', 'kinds', 'categories', 'different']) or \
-           any(word in content for word in ['include', 'such as', 'example', 'different types']):
-            
+        # Check for categorical information or specific question matches
+        is_categorical = any(word in title_lower for word in ['types', 'kinds', 'categories', 'different']) or \
+                       any(word in content for word in ['include', 'such as', 'example', 'different types'])
+        
+        # Also check for seasonal, challenges, or other analytical topics
+        is_analytical = any(word in title_lower for word in ['seasonal', 'challenges', 'considerations', 'factors', 'pain points']) or \
+                       any(word in content for word in ['seasonal', 'challenges', 'problems', 'issues', 'difficulties'])
+        
+        if is_categorical or is_analytical:
             keyword_matches = sum(1 for keyword in keywords if keyword in f"{title_lower} {content}")
             if keyword_matches > 0:
                 category_sections.append({
                     'section': section,
                     'score': keyword_matches,
-                    'content': ' '.join(section['content'])
+                    'content': ' '.join(section['content']).strip()
                 })
     
     if not category_sections:
@@ -640,30 +663,46 @@ def generate_analytical_answer(sections, keywords, question):
     
     answer_parts = []
     
-    for section_info in category_sections[:3]:  # Top 3 most relevant
+    for section_info in category_sections[:2]:  # Top 2 most relevant
         section = section_info['section']
         content = section_info['content']
         
         if section['title']:
-            # Extract bullet points or list items
+            # Look for structured information (bullet points, lists, etc.)
             lines = content.split('\n')
-            items = []
+            structured_items = []
             
             for line in lines:
-                if any(marker in line for marker in ['- **', '- ', '• ', '*']):
-                    items.append(line.strip())
-                elif ':' in line and len(line) < 100:  # Short descriptive lines
-                    items.append(line.strip())
+                line = line.strip()
+                if any(marker in line for marker in ['- **', '- ', '• ', '*']) and len(line) > 10:
+                    # Clean up bullet point formatting
+                    clean_item = line.lstrip('-*• ').strip()
+                    if clean_item:
+                        structured_items.append(clean_item)
+                elif ':' in line and len(line) < 150 and len(line) > 20:  # Descriptive lines
+                    structured_items.append(line)
             
-            if items:
-                formatted_items = '; '.join(items[:3])  # Top 3 items
-                answer_parts.append(f"{section['title']}: {formatted_items}")
+            if structured_items:
+                # Format structured items nicely
+                if len(structured_items) <= 3:
+                    formatted_items = '; '.join(structured_items)
+                else:
+                    formatted_items = '; '.join(structured_items[:3]) + f" (and {len(structured_items)-3} more)"
+                
+                answer_parts.append(f"Regarding {section['title']}: {formatted_items}")
             else:
-                # Fallback to sentences
-                sentences = content.split('.')[0:2]
-                answer_parts.append(f"{section['title']}: {'. '.join(sentences)}.")
+                # Fallback to sentences if no structured content
+                sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 25]
+                if sentences:
+                    best_sentences = '. '.join(sentences[0:2])
+                    if not best_sentences.endswith('.'):
+                        best_sentences += '.'
+                    answer_parts.append(f"Regarding {section['title']}: {best_sentences}")
     
-    return '. '.join(answer_parts) if answer_parts else generate_comprehensive_answer(sections, keywords, question)
+    if answer_parts:
+        return '. '.join(answer_parts)
+    else:
+        return generate_comprehensive_answer(sections, keywords, question)
 
 def generate_yesno_answer(sections, keywords, question):
     """Generate yes/no answer with supporting explanation."""
@@ -707,7 +746,7 @@ def generate_contextual_answer(sections, keywords, question):
         if keyword_matches > 0:
             relevant_info.append({
                 'title': section['title'],
-                'content': ' '.join(section['content']),
+                'content': ' '.join(section['content']).strip(),
                 'matches': keyword_matches
             })
     
@@ -720,22 +759,38 @@ def generate_contextual_answer(sections, keywords, question):
     # Create contextual response
     main_info = relevant_info[0]
     
-    # Start with most relevant information
-    sentences = [s.strip() for s in main_info['content'].split('.') if len(s.strip()) > 15]
-    main_sentence = sentences[0] if sentences else main_info['content']
+    # Start with most relevant information - use complete sentences
+    sentences = [s.strip() for s in main_info['content'].split('.') if len(s.strip()) > 20]
+    if sentences:
+        main_sentence = sentences[0]
+        if not main_sentence.endswith('.'):
+            main_sentence += '.'
+    else:
+        main_sentence = main_info['content']
     
-    response = f"Based on the information about {main_info['title']}: {main_sentence}."
+    if main_info['title']:
+        response = f"Based on {main_info['title']}: {main_sentence}"
+    else:
+        response = main_sentence
     
-    # Add context from other relevant sections
+    # Add context from other relevant sections if available and different
     if len(relevant_info) > 1:
-        additional_context = []
-        for info in relevant_info[1:2]:  # Add one more piece of context
-            context_sentence = info['content'].split('.')[0].strip()
-            if context_sentence and len(context_sentence) > 20:
-                additional_context.append(f"Additionally, regarding {info['title']}: {context_sentence}.")
+        additional_info = relevant_info[1]
+        additional_sentences = [s.strip() for s in additional_info['content'].split('.') if len(s.strip()) > 25]
         
-        if additional_context:
-            response += " " + " ".join(additional_context)
+        if additional_sentences:
+            context_sentence = additional_sentences[0]
+            if not context_sentence.endswith('.'):
+                context_sentence += '.'
+                
+            # Only add if it provides genuinely different information
+            if (context_sentence.lower() not in response.lower() and 
+                len(set(context_sentence.lower().split()) & set(response.lower().split())) < len(context_sentence.split()) * 0.7):
+                
+                if additional_info['title']:
+                    response += f" Additionally, regarding {additional_info['title']}: {context_sentence}"
+                else:
+                    response += f" {context_sentence}"
     
     return response
 
