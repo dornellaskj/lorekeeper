@@ -300,9 +300,18 @@ class DataLoader:
             return 0
 
     def _embed_chunks(self, chunks: List[DocumentChunk]) -> np.ndarray:
-        """Generate embeddings for chunks."""
-        texts = [chunk.content for chunk in chunks]
-        logger.info(f"Generating embeddings for {len(texts)} chunks")
+        """Generate embeddings for chunks, including filename context."""
+        # Prepend filename to content for better semantic matching
+        # This gives document titles significant weight in similarity search
+        texts = []
+        for chunk in chunks:
+            # Clean up filename for embedding (remove extension, replace separators)
+            clean_filename = Path(chunk.file_name).stem.replace('_', ' ').replace('-', ' ')
+            # Combine filename with content - filename appears twice for emphasis
+            enriched_text = f"Document: {clean_filename}\n\n{chunk.content}"
+            texts.append(enriched_text)
+        
+        logger.info(f"Generating embeddings for {len(texts)} chunks (with filename context)")
         
         # Generate embeddings in batches
         embeddings = self.embedding_model.encode(
@@ -419,6 +428,9 @@ class DataLoader:
         # Prepare points for Qdrant
         points = []
         for chunk, embedding in zip(all_chunks, embeddings):
+            # Clean up filename for display/context
+            clean_title = Path(chunk.file_name).stem.replace('_', ' ').replace('-', ' ')
+            
             point = PointStruct(
                 id=self._generate_chunk_id(chunk),
                 vector=embedding.tolist(),
@@ -426,6 +438,7 @@ class DataLoader:
                     'content': chunk.content,
                     'file_path': chunk.file_path,
                     'file_name': chunk.file_name,
+                    'document_title': clean_title,  # Human-readable title for context
                     'chunk_index': chunk.chunk_index,
                     **chunk.metadata
                 }

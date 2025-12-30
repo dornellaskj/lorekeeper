@@ -435,13 +435,19 @@ async def chat(request: QueryRequest):
         
         for result in search_results:
             payload = result.payload
+            # Get document title (clean filename) if available, otherwise use filename
+            doc_title = payload.get("document_title", payload.get("file_name", "Unknown"))
+            content = payload.get("content", "")
+            
             sources.append({
-                "filename": payload.get("file_name", "Unknown"),  # Fixed: use file_name instead of filename
-                "content": payload.get("content", ""),
-                "chunk_id": payload.get("chunk_index", 0)  # Fixed: use chunk_index instead of chunk_id
+                "filename": payload.get("file_name", "Unknown"),
+                "document_title": doc_title,
+                "content": content,
+                "chunk_id": payload.get("chunk_index", 0)
             })
             similarity_scores.append(result.score)
-            context_parts.append(payload.get("content", ""))
+            # Include document title in context for better LLM synthesis
+            context_parts.append(f"[From document: {doc_title}]\n{content}")
         
         # Use top 3 chunks for LLM synthesis
         top_chunks = context_parts[:3]
