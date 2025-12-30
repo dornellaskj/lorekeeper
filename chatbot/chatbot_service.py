@@ -9,6 +9,7 @@ from qdrant_client.models import Filter, FieldCondition, MatchValue, VectorParam
 from sentence_transformers import SentenceTransformer
 import asyncio
 from datetime import datetime
+import openai
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -24,9 +25,18 @@ MODEL_NAME = os.getenv("MODEL_NAME", "all-MiniLM-L6-v2")
 MAX_RESULTS = int(os.getenv("MAX_RESULTS", "5"))
 SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.3"))
 
+# OpenAI/Azure OpenAI Configuration
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", "")
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4")
+USE_AZURE_OPENAI = os.getenv("USE_AZURE_OPENAI", "false").lower() == "true"
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4-1106-preview")  # Default to GPT-4 Turbo
+
 # Global variables
 qdrant_client = None
 embedding_model = None
+openai_client = None
 
 class QueryRequest(BaseModel):
     question: str
@@ -40,8 +50,8 @@ class ChatResponse(BaseModel):
     similarity_scores: List[float]
 
 async def initialize_services():
-    """Initialize Qdrant client and embedding model."""
-    global qdrant_client, embedding_model
+    """Initialize Qdrant client, embedding model, and OpenAI client."""
+    global qdrant_client, embedding_model, openai_client
     
     try:
         # Initialize Qdrant client
@@ -56,6 +66,23 @@ async def initialize_services():
         logger.info(f"Loading embedding model: {MODEL_NAME}")
         embedding_model = SentenceTransformer(MODEL_NAME)
         logger.info("Embedding model loaded successfully")
+        
+        # Initialize OpenAI client
+        if USE_AZURE_OPENAI and AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT:
+            logger.info(f"Initializing Azure OpenAI client with endpoint: {AZURE_OPENAI_ENDPOINT}")
+            openai_client = openai.AzureOpenAI(
+                api_key=AZURE_OPENAI_API_KEY,
+                api_version="2024-02-15-preview",
+                azure_endpoint=AZURE_OPENAI_ENDPOINT
+            )
+            logger.info("Azure OpenAI client initialized successfully")
+        elif OPENAI_API_KEY:
+            logger.info("Initializing OpenAI client")
+            openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+            logger.info("OpenAI client initialized successfully")
+        else:
+            logger.warning("No OpenAI API key configured. LLM synthesis will be disabled.")
+            openai_client = None
         
         return True
         
@@ -416,19 +443,17 @@ async def chat(request: QueryRequest):
             similarity_scores.append(result.score)
             context_parts.append(payload.get("content", ""))
         
-        # Generate answer based on context - use all relevant results
-        context = "\n\n".join(context_parts)  # Use all results for better context
+        # Use top 3 chunks for LLM synthesis
+        top_chunks = context_parts[:3]
         
         # Debug: Print what we're working with
         print(f"\nDEBUG - Question: {request.question}")
-        print(f"DEBUG - Context length: {len(context)}")
-        print(f"DEBUG - Search results count: {len(search_results)}")
-        for i, result in enumerate(search_results):
-            text = result.payload.get("content", "No content")
-            print(f"DEBUG - Result {i} (score: {result.score:.3f}): {text[:150]}...")
-        print(f"DEBUG - Full context: {context[:800]}...")
+        print(f"DEBUG - Top chunks count: {len(top_chunks)}")
+        for i, chunk in enumerate(top_chunks):
+            print(f"DEBUG - Chunk {i} (score: {similarity_scores[i]:.3f}): {chunk[:150]}...")
         
-        answer = generate_answer(request.question, context, search_results)
+        # Generate answer using LLM synthesis (Copilot-style)
+        answer = await synthesize_answer_with_llm(request.question, top_chunks)
         
         query_time = (datetime.now() - start_time).total_seconds()
         
@@ -442,6 +467,83 @@ async def chat(request: QueryRequest):
     except Exception as e:
         logger.error(f"Error processing chat request: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
+
+
+async def synthesize_answer_with_llm(question: str, top_chunks: List[str]) -> str:
+    """
+    Use OpenAI/Azure OpenAI (Copilot) to synthesize an answer from the top chunks.
+    This provides Copilot-style, coherent answers that weave together information from multiple sources.
+    """
+    global openai_client
+    
+    if not openai_client:
+        logger.warning("OpenAI client not initialized. Falling back to basic answer generation.")
+        return generate_fallback_answer(question, top_chunks)
+    
+    # Build context from top chunks
+    context = "\n\n---\n\n".join([f"Source {i+1}:\n{chunk}" for i, chunk in enumerate(top_chunks)])
+    
+    system_prompt = """You are Lorekeeper, an expert assistant that helps users find and understand information from their documents. 
+
+Your task is to synthesize a clear, helpful answer based on the provided context. Follow these guidelines:
+- Combine information from all provided sources into a coherent, well-structured response
+- Be concise but comprehensive - include all relevant details
+- Use natural language - don't just copy text, synthesize and explain
+- If the sources contain conflicting information, acknowledge it
+- If the context doesn't fully answer the question, say what you can answer and what's missing
+- Format your response with proper punctuation and structure
+- Do not make up information not present in the sources"""
+
+    user_prompt = f"""Based on the following context from the user's documents, please answer their question.
+
+Context:
+{context}
+
+Question: {question}
+
+Please provide a clear, synthesized answer:"""
+
+    try:
+        if USE_AZURE_OPENAI:
+            response = openai_client.chat.completions.create(
+                model=AZURE_OPENAI_DEPLOYMENT,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=1024,
+                temperature=0.3,
+            )
+        else:
+            response = openai_client.chat.completions.create(
+                model=LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=1024,
+                temperature=0.3,
+            )
+        
+        answer = response.choices[0].message.content.strip()
+        logger.info(f"LLM synthesis successful. Response length: {len(answer)}")
+        return answer
+        
+    except Exception as e:
+        logger.error(f"Error calling OpenAI API: {e}")
+        logger.info("Falling back to basic answer generation.")
+        return generate_fallback_answer(question, top_chunks)
+
+
+def generate_fallback_answer(question: str, top_chunks: List[str]) -> str:
+    """Fallback answer generation when LLM is not available."""
+    if not top_chunks:
+        return "I couldn't find relevant information to answer your question."
+    
+    # Simple fallback: return the most relevant chunk with context
+    context = "\n\n".join(top_chunks)
+    return generate_answer(question, context, [])
+
 
 def generate_answer(question: str, context: str, search_results: list) -> str:
     """Generate an enhanced answer based on the question and context.

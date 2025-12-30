@@ -33,6 +33,30 @@ spec:
           value: "5"
         - name: SIMILARITY_THRESHOLD
           value: "0.3"
+        # OpenAI/Azure OpenAI Configuration (optional - for LLM synthesis)
+        # Uncomment and configure these to enable Copilot-style answer synthesis
+        # Option 1: OpenAI API
+        # - name: OPENAI_API_KEY
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: openai-secret
+        #       key: api-key
+        #       optional: true
+        # Option 2: Azure OpenAI
+        # - name: USE_AZURE_OPENAI
+        #   value: "true"
+        # - name: AZURE_OPENAI_API_KEY
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: azure-openai-secret
+        #       key: api-key
+        #       optional: true
+        # - name: AZURE_OPENAI_ENDPOINT
+        #   value: "https://your-resource.openai.azure.com/"
+        # - name: AZURE_OPENAI_DEPLOYMENT
+        #   value: "gpt-4"
+        # - name: LLM_MODEL
+        #   value: "gpt-4-1106-preview"
         resources:
           requests:
             memory: "512Mi"

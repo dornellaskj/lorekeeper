@@ -57,6 +57,38 @@ Environment variables:
 | `MODEL_NAME` | `all-MiniLM-L6-v2` | Sentence transformer model |
 | `MAX_RESULTS` | `5` | Maximum search results |
 | `SIMILARITY_THRESHOLD` | `0.3` | Minimum similarity score |
+| `OPENAI_API_KEY` | `` | OpenAI API key (for GPT synthesis) |
+| `AZURE_OPENAI_API_KEY` | `` | Azure OpenAI API key |
+| `AZURE_OPENAI_ENDPOINT` | `` | Azure OpenAI endpoint URL |
+| `AZURE_OPENAI_DEPLOYMENT` | `gpt-4` | Azure OpenAI deployment name |
+| `USE_AZURE_OPENAI` | `false` | Use Azure OpenAI instead of OpenAI |
+| `LLM_MODEL` | `gpt-4-1106-preview` | OpenAI model to use |
+
+## 🤖 LLM-Powered Answer Synthesis
+
+The chatbot now supports **Copilot-style answer synthesis** using OpenAI GPT-4 (or Azure OpenAI). Instead of just returning retrieved chunks, it:
+
+1. **Retrieves** the top 3 most relevant document chunks from Qdrant
+2. **Sends** the chunks + user question to GPT-4/Azure OpenAI
+3. **Synthesizes** a coherent, natural-language answer that weaves information from all sources
+
+### Setup Options
+
+#### Option 1: OpenAI API
+```bash
+export OPENAI_API_KEY="sk-your-api-key"
+```
+
+#### Option 2: Azure OpenAI
+```bash
+export USE_AZURE_OPENAI="true"
+export AZURE_OPENAI_API_KEY="your-azure-key"
+export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
+export AZURE_OPENAI_DEPLOYMENT="gpt-4"
+```
+
+### Fallback Behavior
+If no API key is configured, the chatbot falls back to basic rule-based answer generation.
 
 ## 📡 API Endpoints
 
