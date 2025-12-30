@@ -33,16 +33,15 @@ spec:
           value: "5"
         - name: SIMILARITY_THRESHOLD
           value: "0.3"
-        # OpenAI/Azure OpenAI Configuration (optional - for LLM synthesis)
-        # Uncomment and configure these to enable Copilot-style answer synthesis
+        # OpenAI/Azure OpenAI Configuration (for LLM synthesis)
         # Option 1: OpenAI API
-        # - name: OPENAI_API_KEY
-        #   valueFrom:
-        #     secretKeyRef:
-        #       name: openai-secret
-        #       key: api-key
-        #       optional: true
-        # Option 2: Azure OpenAI
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: openai-secret
+              key: api-key
+              optional: true
+        # Option 2: Azure OpenAI (uncomment to use instead of OpenAI)
         # - name: USE_AZURE_OPENAI
         #   value: "true"
         # - name: AZURE_OPENAI_API_KEY
