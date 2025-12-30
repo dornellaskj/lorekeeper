@@ -31,7 +31,7 @@ AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", "")
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "")
 AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4")
 USE_AZURE_OPENAI = os.getenv("USE_AZURE_OPENAI", "false").lower() == "true"
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4-1106-preview")  # Default to GPT-4 Turbo
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-3.5-turbo")  # Default to GPT-3.5 (widely available)
 
 # Global variables
 qdrant_client = None
