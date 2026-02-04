@@ -21,6 +21,8 @@ app = FastAPI(title="Lorekeeper Chatbot", version="1.0.0")
 QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant-service")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "documents")
+GRAPH_COLLECTION = os.getenv("GRAPH_COLLECTION", "knowledge_graph")
+USE_KNOWLEDGE_GRAPH = os.getenv("USE_KNOWLEDGE_GRAPH", "true").lower() == "true"
 MODEL_NAME = os.getenv("MODEL_NAME", "all-MiniLM-L6-v2")
 MAX_RESULTS = int(os.getenv("MAX_RESULTS", "5"))
 SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.3"))
@@ -48,6 +50,8 @@ class ChatResponse(BaseModel):
     sources: List[dict]
     query_time: float
     similarity_scores: List[float]
+    related_topics: Optional[List[dict]] = None
+    graph_enhanced: Optional[bool] = False
 
 async def initialize_services():
     """Initialize Qdrant client, embedding model, and OpenAI client."""
@@ -381,6 +385,234 @@ async def chat_page():
     """
     return html_content
 
+
+@app.get("/graph/topics")
+async def get_topics():
+    """Get all topic clusters from the knowledge graph."""
+    if not qdrant_client:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    
+    try:
+        collections = qdrant_client.get_collections()
+        if GRAPH_COLLECTION not in [c.name for c in collections.collections]:
+            return {"error": "Knowledge graph not found", "topics": []}
+        
+        topics = []
+        offset = None
+        
+        while True:
+            results, next_offset = qdrant_client.scroll(
+                collection_name=GRAPH_COLLECTION,
+                scroll_filter=Filter(
+                    must=[FieldCondition(key="node_type", match=MatchValue(value="cluster_topic"))]
+                ),
+                limit=100,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False
+            )
+            
+            if not results:
+                break
+            
+            for point in results:
+                topics.append({
+                    'cluster_id': point.payload.get('cluster_id'),
+                    'label': point.payload.get('label'),
+                    'num_chunks': point.payload.get('num_chunks'),
+                    'num_documents': point.payload.get('num_documents'),
+                    'documents': point.payload.get('document_titles', [])[:10],
+                    'sample_content': point.payload.get('sample_content', [])[:2]
+                })
+            
+            if next_offset is None:
+                break
+            offset = next_offset
+        
+        return {"topics": topics, "count": len(topics)}
+        
+    except Exception as e:
+        logger.error(f"Error fetching topics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/graph/stats")
+async def get_graph_stats():
+    """Get statistics about the knowledge graph."""
+    if not qdrant_client:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    
+    try:
+        collections = qdrant_client.get_collections()
+        collection_names = [c.name for c in collections.collections]
+        
+        stats = {
+            'documents_collection': COLLECTION_NAME in collection_names,
+            'graph_collection': GRAPH_COLLECTION in collection_names,
+            'graph_enabled': USE_KNOWLEDGE_GRAPH
+        }
+        
+        if COLLECTION_NAME in collection_names:
+            doc_info = qdrant_client.get_collection(COLLECTION_NAME)
+            stats['total_chunks'] = doc_info.points_count
+        
+        if GRAPH_COLLECTION in collection_names:
+            graph_info = qdrant_client.get_collection(GRAPH_COLLECTION)
+            stats['total_graph_nodes'] = graph_info.points_count
+            
+            # Count node types
+            for node_type in ['cluster_topic', 'document', 'edge']:
+                results, _ = qdrant_client.scroll(
+                    collection_name=GRAPH_COLLECTION,
+                    scroll_filter=Filter(
+                        must=[FieldCondition(key="node_type", match=MatchValue(value=node_type))]
+                    ),
+                    limit=1,
+                    with_payload=False,
+                    with_vectors=False
+                )
+                # Get count by scrolling (simplified - for accurate count would need aggregation)
+                count_results, _ = qdrant_client.scroll(
+                    collection_name=GRAPH_COLLECTION,
+                    scroll_filter=Filter(
+                        must=[FieldCondition(key="node_type", match=MatchValue(value=node_type))]
+                    ),
+                    limit=10000,
+                    with_payload=False,
+                    with_vectors=False
+                )
+                stats[f'{node_type}_count'] = len(count_results)
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error fetching graph stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def search_with_knowledge_graph(question_embedding: list, max_results: int, threshold: float) -> dict:
+    """
+    Enhanced search using knowledge graph for better context retrieval.
+    
+    Strategy:
+    1. Search cluster topics to identify relevant topic areas
+    2. Search documents to find relevant document-level context
+    3. Search original chunks for detailed content
+    4. Combine results with graph relationships for richer context
+    """
+    results = {
+        'chunks': [],
+        'related_topics': [],
+        'related_documents': [],
+        'graph_enhanced': False
+    }
+    
+    try:
+        # Check if knowledge_graph collection exists
+        collections = qdrant_client.get_collections()
+        collection_names = [c.name for c in collections.collections]
+        
+        if GRAPH_COLLECTION not in collection_names:
+            logger.warning(f"Knowledge graph collection '{GRAPH_COLLECTION}' not found. Using standard search.")
+            return results
+        
+        results['graph_enhanced'] = True
+        
+        # 1. Find relevant cluster topics
+        topic_results = qdrant_client.search(
+            collection_name=GRAPH_COLLECTION,
+            query_vector=question_embedding,
+            query_filter=Filter(
+                must=[FieldCondition(key="node_type", match=MatchValue(value="cluster_topic"))]
+            ),
+            limit=3,
+            score_threshold=0.3
+        )
+        
+        relevant_cluster_ids = []
+        for topic in topic_results:
+            cluster_id = topic.payload.get('cluster_id')
+            if cluster_id is not None:
+                relevant_cluster_ids.append(cluster_id)
+                results['related_topics'].append({
+                    'cluster_id': cluster_id,
+                    'label': topic.payload.get('label', f'Topic {cluster_id}'),
+                    'documents': topic.payload.get('document_titles', [])[:5],
+                    'score': topic.score
+                })
+        
+        logger.info(f"Found {len(relevant_cluster_ids)} relevant topic clusters: {relevant_cluster_ids}")
+        
+        # 2. Find relevant documents from graph
+        doc_results = qdrant_client.search(
+            collection_name=GRAPH_COLLECTION,
+            query_vector=question_embedding,
+            query_filter=Filter(
+                must=[FieldCondition(key="node_type", match=MatchValue(value="document"))]
+            ),
+            limit=5,
+            score_threshold=0.3
+        )
+        
+        relevant_doc_names = []
+        for doc in doc_results:
+            doc_name = doc.payload.get('file_name', '')
+            if doc_name:
+                relevant_doc_names.append(doc_name)
+                results['related_documents'].append({
+                    'file_name': doc_name,
+                    'title': doc.payload.get('document_title', doc_name),
+                    'cluster_id': doc.payload.get('primary_cluster', -1),
+                    'score': doc.score
+                })
+        
+        logger.info(f"Found {len(relevant_doc_names)} relevant documents from graph")
+        
+        # 3. Search chunks - prioritize chunks from relevant clusters/documents
+        # First, get chunks from relevant clusters
+        if relevant_cluster_ids:
+            for cluster_id in relevant_cluster_ids[:2]:  # Top 2 clusters
+                cluster_chunks = qdrant_client.search(
+                    collection_name=COLLECTION_NAME,
+                    query_vector=question_embedding,
+                    query_filter=Filter(
+                        must=[FieldCondition(key="cluster_id", match=MatchValue(value=cluster_id))]
+                    ),
+                    limit=3,
+                    score_threshold=threshold
+                )
+                results['chunks'].extend(cluster_chunks)
+        
+        # Also do a general search to catch anything missed
+        general_chunks = qdrant_client.search(
+            collection_name=COLLECTION_NAME,
+            query_vector=question_embedding,
+            limit=max_results * 2,
+            score_threshold=max(threshold - 0.1, 0.2)
+        )
+        results['chunks'].extend(general_chunks)
+        
+        # Deduplicate chunks by ID
+        seen_ids = set()
+        unique_chunks = []
+        for chunk in results['chunks']:
+            if chunk.id not in seen_ids:
+                seen_ids.add(chunk.id)
+                unique_chunks.append(chunk)
+        results['chunks'] = unique_chunks
+        
+        # Sort by score
+        results['chunks'].sort(key=lambda x: x.score, reverse=True)
+        
+        logger.info(f"Graph-enhanced search returned {len(results['chunks'])} unique chunks")
+        
+    except Exception as e:
+        logger.error(f"Error in graph-enhanced search: {e}")
+        # Fall back to empty results, will use standard search
+    
+    return results
+
+
 @app.post("/chat")
 async def chat(request: QueryRequest):
     """Process a chat question and return an answer with sources."""
@@ -393,13 +625,39 @@ async def chat(request: QueryRequest):
         # Generate embedding for the question
         question_embedding = embedding_model.encode(request.question).tolist()
         
-        # Search in Qdrant with improved strategy for diverse results
-        search_results = qdrant_client.search(
-            collection_name=COLLECTION_NAME,
-            query_vector=question_embedding,
-            limit=min(request.max_results * 2, 10),  # Get more results initially
-            score_threshold=max(request.threshold - 0.1, 0.2)  # Lower threshold for more diversity
-        )
+        # Try graph-enhanced search first
+        graph_results = None
+        related_topics = None
+        graph_enhanced = False
+        
+        if USE_KNOWLEDGE_GRAPH:
+            graph_results = await search_with_knowledge_graph(
+                question_embedding, 
+                request.max_results, 
+                request.threshold
+            )
+            graph_enhanced = graph_results.get('graph_enhanced', False)
+            related_topics = graph_results.get('related_topics', [])
+            
+            if graph_results['chunks']:
+                search_results = graph_results['chunks']
+                logger.info(f"Using graph-enhanced results: {len(search_results)} chunks")
+            else:
+                # Fall back to standard search
+                search_results = qdrant_client.search(
+                    collection_name=COLLECTION_NAME,
+                    query_vector=question_embedding,
+                    limit=min(request.max_results * 2, 10),
+                    score_threshold=max(request.threshold - 0.1, 0.2)
+                )
+        else:
+            # Standard search without graph
+            search_results = qdrant_client.search(
+                collection_name=COLLECTION_NAME,
+                query_vector=question_embedding,
+                limit=min(request.max_results * 2, 10),
+                score_threshold=max(request.threshold - 0.1, 0.2)
+            )
         
         # Filter and diversify results
         filtered_results = []
@@ -458,8 +716,14 @@ async def chat(request: QueryRequest):
         for i, chunk in enumerate(top_chunks):
             print(f"DEBUG - Chunk {i} (score: {similarity_scores[i]:.3f}): {chunk[:150]}...")
         
+        # Add topic context to LLM prompt if we have related topics
+        topic_context = ""
+        if related_topics:
+            topic_names = [t['label'] for t in related_topics[:3]]
+            topic_context = f"\n\nRelated topic areas: {', '.join(topic_names)}"
+        
         # Generate answer using LLM synthesis (Copilot-style)
-        answer = await synthesize_answer_with_llm(request.question, top_chunks)
+        answer = await synthesize_answer_with_llm(request.question, top_chunks, topic_context)
         
         query_time = (datetime.now() - start_time).total_seconds()
         
@@ -467,7 +731,9 @@ async def chat(request: QueryRequest):
             answer=answer,
             sources=sources,
             query_time=query_time,
-            similarity_scores=similarity_scores
+            similarity_scores=similarity_scores,
+            related_topics=related_topics,
+            graph_enhanced=graph_enhanced
         )
         
     except Exception as e:
@@ -475,7 +741,7 @@ async def chat(request: QueryRequest):
         raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
 
 
-async def synthesize_answer_with_llm(question: str, top_chunks: List[str]) -> str:
+async def synthesize_answer_with_llm(question: str, top_chunks: List[str], topic_context: str = "") -> str:
     """
     Use OpenAI/Azure OpenAI (Copilot) to synthesize an answer from the top chunks.
     This provides Copilot-style, coherent answers that weave together information from multiple sources.
@@ -488,6 +754,10 @@ async def synthesize_answer_with_llm(question: str, top_chunks: List[str]) -> st
     
     # Build context from top chunks
     context = "\n\n---\n\n".join([f"Source {i+1}:\n{chunk}" for i, chunk in enumerate(top_chunks)])
+    
+    # Add topic context if available
+    if topic_context:
+        context += f"\n\n---{topic_context}"
     
     system_prompt = """You are Lorekeeper, an expert assistant that helps users find and understand information from their documents. 
 
