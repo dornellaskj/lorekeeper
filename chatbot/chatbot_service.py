@@ -15,18 +15,19 @@ import openai
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Lorekeeper Chatbot", version="2.0.0")
+app = FastAPI(title="Lorekeeper Chatbot", version="2.2.0")
 
 # Version info for deployment verification
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.2.0"
 BUILD_DATE = "2026-02-04"
-FEATURES = ["knowledge-graph-search", "graph-toggle-ui", "topic-clustering"]
+FEATURES = ["knowledge-graph-search", "graph-toggle-ui", "topic-clustering", "graph-first-search", "semantic-triples"]
 
 # Configuration
 QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant-service")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "documents")
 GRAPH_COLLECTION = os.getenv("GRAPH_COLLECTION", "knowledge_graph")
+TRIPLE_COLLECTION = os.getenv("TRIPLE_COLLECTION", "semantic_triples")
 USE_KNOWLEDGE_GRAPH = os.getenv("USE_KNOWLEDGE_GRAPH", "true").lower() == "true"
 MODEL_NAME = os.getenv("MODEL_NAME", "all-MiniLM-L6-v2")
 MAX_RESULTS = int(os.getenv("MAX_RESULTS", "5"))
@@ -50,6 +51,7 @@ class QueryRequest(BaseModel):
     max_results: Optional[int] = MAX_RESULTS
     threshold: Optional[float] = SIMILARITY_THRESHOLD
     use_knowledge_graph: Optional[bool] = None  # None = use server default
+    search_mode: Optional[str] = None  # 'vector', 'graph', 'triples', or None for auto
 
 class ChatResponse(BaseModel):
     answer: str
@@ -58,6 +60,8 @@ class ChatResponse(BaseModel):
     similarity_scores: List[float]
     related_topics: Optional[List[dict]] = None
     graph_enhanced: Optional[bool] = False
+    search_mode: Optional[str] = None
+    facts: Optional[List[dict]] = None  # For triple-based results
 
 async def initialize_services():
     """Initialize Qdrant client, embedding model, and OpenAI client."""
@@ -323,6 +327,10 @@ async def chat_page():
                 background: #6c757d;
                 color: white;
             }
+            .badge-triples {
+                background: #9c27b0;
+                color: white;
+            }
             .related-topics {
                 margin-top: 8px;
                 padding: 8px;
@@ -332,6 +340,49 @@ async def chat_page():
             }
             .related-topics strong {
                 color: #28a745;
+            }
+            .facts-list {
+                margin-top: 8px;
+                padding: 8px;
+                background: rgba(156, 39, 176, 0.1);
+                border-radius: 5px;
+                font-size: 13px;
+            }
+            .facts-list strong {
+                color: #9c27b0;
+            }
+            .fact-item {
+                margin: 4px 0;
+                padding: 4px 8px;
+                background: rgba(255,255,255,0.5);
+                border-radius: 3px;
+                border-left: 3px solid #9c27b0;
+            }
+            .fact-subject {
+                color: #d32f2f;
+                font-weight: 500;
+            }
+            .fact-predicate {
+                color: #1976d2;
+                font-style: italic;
+                margin: 0 4px;
+            }
+            .fact-object {
+                color: #388e3c;
+                font-weight: 500;
+            }
+            .mode-select {
+                padding: 8px 12px;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                font-size: 14px;
+                background: white;
+                cursor: pointer;
+                min-width: 180px;
+            }
+            .mode-select:focus {
+                outline: none;
+                border-color: #007bff;
             }
         </style>
     </head>
@@ -346,13 +397,13 @@ async def chat_page():
                 <div class="toggle-container">
                     <div class="toggle-label">
                         🔍 <span>Search Mode:</span>
-                        <span id="modeLabel" style="font-weight: bold;">Knowledge Graph</span>
-                        <span id="modeBadge" class="graph-badge badge-graph">Enhanced</span>
+                        <span id="modeBadge" class="graph-badge badge-graph">Graph</span>
                     </div>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="useGraphToggle" checked onchange="toggleSearchMode()">
-                        <span class="toggle-slider"></span>
-                    </label>
+                    <select id="searchModeSelect" class="mode-select" onchange="updateSearchMode()">
+                        <option value="graph" selected>🌐 Knowledge Graph</option>
+                        <option value="vector">📄 Standard Vector</option>
+                        <option value="triples">🔗 Semantic Triples</option>
+                    </select>
                 </div>
                 <button class="clear-btn" onclick="clearChat()">🗑️ Clear Chat</button>
                 
@@ -379,18 +430,19 @@ async def chat_page():
             const questionInput = document.getElementById('questionInput');
             const askButton = document.getElementById('askButton');
             const loading = document.getElementById('loading');
-            const useGraphToggle = document.getElementById('useGraphToggle');
-            const modeLabel = document.getElementById('modeLabel');
+            const searchModeSelect = document.getElementById('searchModeSelect');
             const modeBadge = document.getElementById('modeBadge');
 
-            function toggleSearchMode() {
-                if (useGraphToggle.checked) {
-                    modeLabel.textContent = 'Knowledge Graph';
-                    modeBadge.textContent = 'Enhanced';
+            function updateSearchMode() {
+                const mode = searchModeSelect.value;
+                if (mode === 'graph') {
+                    modeBadge.textContent = 'Graph';
                     modeBadge.className = 'graph-badge badge-graph';
+                } else if (mode === 'triples') {
+                    modeBadge.textContent = 'Triples';
+                    modeBadge.className = 'graph-badge badge-triples';
                 } else {
-                    modeLabel.textContent = 'Standard Vector';
-                    modeBadge.textContent = 'Basic';
+                    modeBadge.textContent = 'Vector';
                     modeBadge.className = 'graph-badge badge-standard';
                 }
             }
@@ -406,15 +458,20 @@ async def chat_page():
                 const question = questionInput.value.trim();
                 if (!question) return;
 
-                // Add user message
-                const useGraph = useGraphToggle.checked;
+                const searchMode = searchModeSelect.value;
                 addMessage(question, 'user');
                 
                 // Clear input and disable button
                 questionInput.value = '';
                 askButton.disabled = true;
                 loading.style.display = 'block';
-                loading.textContent = useGraph ? '🔍 Searching knowledge graph...' : '🔍 Searching documents...';
+                
+                const loadingMessages = {
+                    'graph': '🌐 Searching knowledge graph...',
+                    'vector': '📄 Searching documents...',
+                    'triples': '🔗 Querying semantic triples...'
+                };
+                loading.textContent = loadingMessages[searchMode] || '🔍 Searching...';
 
                 try {
                     const response = await fetch('/chat', {
@@ -424,7 +481,7 @@ async def chat_page():
                         },
                         body: JSON.stringify({ 
                             question: question,
-                            use_knowledge_graph: useGraph
+                            search_mode: searchMode
                         })
                     });
 
@@ -466,10 +523,16 @@ async def chat_page():
                 messageDiv.className = 'message bot-message';
                 
                 const time = new Date().toLocaleTimeString();
-                const isGraphEnhanced = data.graph_enhanced || false;
-                const searchBadge = isGraphEnhanced 
-                    ? '<span class="graph-badge badge-graph">Graph</span>' 
-                    : '<span class="graph-badge badge-standard">Standard</span>';
+                const searchMode = data.search_mode || (data.graph_enhanced ? 'graph' : 'vector');
+                
+                let searchBadge;
+                if (searchMode === 'graph') {
+                    searchBadge = '<span class="graph-badge badge-graph">Graph</span>';
+                } else if (searchMode === 'triples') {
+                    searchBadge = '<span class="graph-badge badge-triples">Triples</span>';
+                } else {
+                    searchBadge = '<span class="graph-badge badge-standard">Vector</span>';
+                }
                 
                 let relatedTopicsHtml = '';
                 if (data.related_topics && data.related_topics.length > 0) {
@@ -479,6 +542,25 @@ async def chat_page():
                             <strong>🏷️ Related Topics:</strong> ${topicNames}
                         </div>
                     `;
+                }
+                
+                // Display facts for triple search mode
+                let factsHtml = '';
+                if (data.facts && data.facts.length > 0) {
+                    factsHtml = '<div class="facts-list"><strong>🔗 Semantic Facts:</strong>';
+                    data.facts.slice(0, 10).forEach(fact => {
+                        factsHtml += `
+                            <div class="fact-item">
+                                <span class="fact-subject">${fact.subject}</span>
+                                <span class="fact-predicate">${fact.predicate}</span>
+                                <span class="fact-object">${fact.object}</span>
+                            </div>
+                        `;
+                    });
+                    if (data.facts.length > 10) {
+                        factsHtml += `<div class="fact-item"><em>...and ${data.facts.length - 10} more facts</em></div>`;
+                    }
+                    factsHtml += '</div>';
                 }
                 
                 let sourcesHtml = '';
@@ -499,6 +581,7 @@ async def chat_page():
                 messageDiv.innerHTML = `
                     <strong>🤖 Lorekeeper:</strong> ${searchBadge} ${data.answer}
                     ${relatedTopicsHtml}
+                    ${factsHtml}
                     ${sourcesHtml}
                     <div class="stats">Query time: ${data.query_time.toFixed(2)}s | Found ${data.sources.length} relevant sources</div>
                     <div class="message-time">${time}</div>
@@ -632,15 +715,185 @@ async def get_graph_stats():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/triples/stats")
+async def get_triple_stats():
+    """Get statistics about the semantic triple store."""
+    if not qdrant_client:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    
+    try:
+        collections = qdrant_client.get_collections()
+        collection_names = [c.name for c in collections.collections]
+        
+        stats = {
+            'triple_collection_exists': TRIPLE_COLLECTION in collection_names,
+            'triple_collection_name': TRIPLE_COLLECTION,
+            'total_triples': 0,
+            'triple_types': {}
+        }
+        
+        if TRIPLE_COLLECTION in collection_names:
+            triple_info = qdrant_client.get_collection(TRIPLE_COLLECTION)
+            stats['total_triples'] = triple_info.points_count
+            
+            # Count by triple type
+            for triple_type in ['definition', 'property', 'action', 'relationship', 'hierarchy', 'causation', 'location']:
+                count_results, _ = qdrant_client.scroll(
+                    collection_name=TRIPLE_COLLECTION,
+                    scroll_filter=Filter(
+                        must=[FieldCondition(key="triple_type", match=MatchValue(value=triple_type))]
+                    ),
+                    limit=10000,
+                    with_payload=False,
+                    with_vectors=False
+                )
+                if count_results:
+                    stats['triple_types'][triple_type] = len(count_results)
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error fetching triple stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def search_with_triples(question_embedding: list, max_results: int, threshold: float) -> dict:
+    """
+    Search using semantic triples for atomic fact retrieval.
+    
+    Returns structured facts from the triple store.
+    """
+    results = {
+        'facts': [],
+        'entities': set(),
+        'sources': set(),
+        'chunks': [],  # We'll convert facts to chunk-like format for compatibility
+        'triple_enhanced': False
+    }
+    
+    try:
+        # Check if triple collection exists
+        collections = qdrant_client.get_collections()
+        collection_names = [c.name for c in collections.collections]
+        
+        if TRIPLE_COLLECTION not in collection_names:
+            logger.warning(f"Triple collection '{TRIPLE_COLLECTION}' not found.")
+            return results
+        
+        results['triple_enhanced'] = True
+        
+        # Search for relevant triples
+        triple_results = qdrant_client.search(
+            collection_name=TRIPLE_COLLECTION,
+            query_vector=question_embedding,
+            limit=max_results * 3,
+            score_threshold=threshold
+        )
+        
+        logger.info(f"Triple search returned {len(triple_results)} results")
+        
+        for r in triple_results:
+            payload = r.payload
+            
+            # Format as readable fact
+            predicate_text = payload.get('predicate', '').replace('_', ' ')
+            subject = payload.get('subject', '')
+            obj = payload.get('object', '')
+            
+            fact_text = f"{subject} {predicate_text} {obj}"
+            
+            results['facts'].append({
+                'fact': fact_text,
+                'subject': subject,
+                'predicate': payload.get('predicate', ''),
+                'object': obj,
+                'type': payload.get('triple_type', ''),
+                'confidence': payload.get('confidence', 0.5),
+                'score': r.score,
+                'source': payload.get('source_file', ''),
+                'source_text': payload.get('source_text', '')
+            })
+            
+            results['entities'].add(subject)
+            results['entities'].add(obj)
+            results['sources'].add(payload.get('source_file', ''))
+        
+        # Sort by combined score
+        results['facts'].sort(key=lambda x: x['score'] * x['confidence'], reverse=True)
+        results['facts'] = results['facts'][:max_results * 2]
+        
+        # Get related triples for top entities (graph expansion)
+        if results['facts']:
+            top_entity = results['facts'][0]['subject']
+            related = await _get_related_triples(top_entity, limit=3)
+            results['related_facts'] = related
+        
+        # Convert to list for JSON serialization
+        results['entities'] = list(results['entities'])
+        results['sources'] = list(results['sources'])
+        
+        logger.info(f"Triple search found {len(results['facts'])} facts from {len(results['sources'])} sources")
+        
+    except Exception as e:
+        logger.error(f"Error in triple search: {e}")
+    
+    return results
+
+
+async def _get_related_triples(entity: str, limit: int = 5) -> List[dict]:
+    """Get triples related to an entity."""
+    related = []
+    
+    try:
+        # Find triples where entity is subject
+        results, _ = qdrant_client.scroll(
+            collection_name=TRIPLE_COLLECTION,
+            scroll_filter=Filter(
+                must=[FieldCondition(key="subject", match=MatchValue(value=entity))]
+            ),
+            limit=limit,
+            with_payload=True
+        )
+        
+        for r in results:
+            predicate_text = r.payload.get('predicate', '').replace('_', ' ')
+            related.append({
+                'fact': f"{r.payload.get('subject', '')} {predicate_text} {r.payload.get('object', '')}",
+                'type': r.payload.get('triple_type', '')
+            })
+        
+        # Find triples where entity is object
+        results, _ = qdrant_client.scroll(
+            collection_name=TRIPLE_COLLECTION,
+            scroll_filter=Filter(
+                must=[FieldCondition(key="object", match=MatchValue(value=entity))]
+            ),
+            limit=limit,
+            with_payload=True
+        )
+        
+        for r in results:
+            predicate_text = r.payload.get('predicate', '').replace('_', ' ')
+            related.append({
+                'fact': f"{r.payload.get('subject', '')} {predicate_text} {r.payload.get('object', '')}",
+                'type': r.payload.get('triple_type', '')
+            })
+    
+    except Exception as e:
+        logger.warning(f"Error getting related triples: {e}")
+    
+    return related[:limit]
+
+
 async def search_with_knowledge_graph(question_embedding: list, max_results: int, threshold: float) -> dict:
     """
     Enhanced search using knowledge graph for better context retrieval.
     
-    Strategy:
+    Strategy (Graph-First Approach):
     1. Search cluster topics to identify relevant topic areas
-    2. Search documents to find relevant document-level context
-    3. Search original chunks for detailed content
-    4. Combine results with graph relationships for richer context
+    2. Find related documents via graph (document nodes + edges)
+    3. Retrieve chunks ONLY from those identified documents
+    4. This gives more focused, topic-coherent results vs general vector search
     """
     results = {
         'chunks': [],
@@ -668,14 +921,18 @@ async def search_with_knowledge_graph(question_embedding: list, max_results: int
                 must=[FieldCondition(key="node_type", match=MatchValue(value="cluster_topic"))]
             ),
             limit=3,
-            score_threshold=0.3
+            score_threshold=0.25
         )
         
         relevant_cluster_ids = []
+        cluster_doc_names = set()
         for topic in topic_results:
             cluster_id = topic.payload.get('cluster_id')
             if cluster_id is not None:
                 relevant_cluster_ids.append(cluster_id)
+                # Get documents from this cluster
+                for doc in topic.payload.get('documents', []):
+                    cluster_doc_names.add(doc)
                 results['related_topics'].append({
                     'cluster_id': cluster_id,
                     'label': topic.payload.get('label', f'Topic {cluster_id}'),
@@ -684,8 +941,9 @@ async def search_with_knowledge_graph(question_embedding: list, max_results: int
                 })
         
         logger.info(f"Found {len(relevant_cluster_ids)} relevant topic clusters: {relevant_cluster_ids}")
+        logger.info(f"Cluster documents: {list(cluster_doc_names)[:5]}")
         
-        # 2. Find relevant documents from graph
+        # 2. Find related documents from graph (document nodes)
         doc_results = qdrant_client.search(
             collection_name=GRAPH_COLLECTION,
             query_vector=question_embedding,
@@ -696,11 +954,11 @@ async def search_with_knowledge_graph(question_embedding: list, max_results: int
             score_threshold=0.3
         )
         
-        relevant_doc_names = []
+        relevant_doc_names = set()
         for doc in doc_results:
             doc_name = doc.payload.get('file_name', '')
             if doc_name:
-                relevant_doc_names.append(doc_name)
+                relevant_doc_names.add(doc_name)
                 results['related_documents'].append({
                     'file_name': doc_name,
                     'title': doc.payload.get('document_title', doc_name),
@@ -708,31 +966,47 @@ async def search_with_knowledge_graph(question_embedding: list, max_results: int
                     'score': doc.score
                 })
         
-        logger.info(f"Found {len(relevant_doc_names)} relevant documents from graph")
-        
-        # 3. Search chunks - prioritize chunks from relevant clusters/documents
-        # First, get chunks from relevant clusters
-        if relevant_cluster_ids:
-            for cluster_id in relevant_cluster_ids[:2]:  # Top 2 clusters
-                cluster_chunks = qdrant_client.search(
-                    collection_name=COLLECTION_NAME,
-                    query_vector=question_embedding,
-                    query_filter=Filter(
-                        must=[FieldCondition(key="cluster_id", match=MatchValue(value=cluster_id))]
-                    ),
-                    limit=3,
-                    score_threshold=threshold
-                )
-                results['chunks'].extend(cluster_chunks)
-        
-        # Also do a general search to catch anything missed
-        general_chunks = qdrant_client.search(
-            collection_name=COLLECTION_NAME,
+        # 3. Find connected documents via edges (expand our document set)
+        edge_results = qdrant_client.search(
+            collection_name=GRAPH_COLLECTION,
             query_vector=question_embedding,
-            limit=max_results * 2,
-            score_threshold=max(threshold - 0.1, 0.2)
+            query_filter=Filter(
+                must=[FieldCondition(key="node_type", match=MatchValue(value="edge"))]
+            ),
+            limit=5,
+            score_threshold=0.3
         )
-        results['chunks'].extend(general_chunks)
+        
+        for edge in edge_results:
+            # Add both connected documents
+            source_file = edge.payload.get('source_file', '')
+            target_file = edge.payload.get('target_file', '')
+            if source_file:
+                relevant_doc_names.add(source_file)
+            if target_file:
+                relevant_doc_names.add(target_file)
+        
+        # Combine with cluster documents
+        all_relevant_docs = relevant_doc_names.union(cluster_doc_names)
+        logger.info(f"Graph identified {len(all_relevant_docs)} relevant documents: {list(all_relevant_docs)[:5]}")
+        
+        # 4. Search chunks ONLY from graph-identified documents
+        if all_relevant_docs:
+            for doc_name in list(all_relevant_docs)[:8]:  # Limit to top 8 docs
+                try:
+                    doc_chunks = qdrant_client.search(
+                        collection_name=COLLECTION_NAME,
+                        query_vector=question_embedding,
+                        query_filter=Filter(
+                            must=[FieldCondition(key="file_name", match=MatchValue(value=doc_name))]
+                        ),
+                        limit=3,
+                        score_threshold=threshold
+                    )
+                    results['chunks'].extend(doc_chunks)
+                    logger.info(f"  Document '{doc_name}': found {len(doc_chunks)} chunks")
+                except Exception as e:
+                    logger.warning(f"Error searching document {doc_name}: {e}")
         
         # Deduplicate chunks by ID
         seen_ids = set()
@@ -746,7 +1020,10 @@ async def search_with_knowledge_graph(question_embedding: list, max_results: int
         # Sort by score
         results['chunks'].sort(key=lambda x: x.score, reverse=True)
         
-        logger.info(f"Graph-enhanced search returned {len(results['chunks'])} unique chunks")
+        # Trim to requested limit
+        results['chunks'] = results['chunks'][:max_results * 2]
+        
+        logger.info(f"Graph-enhanced search returned {len(results['chunks'])} unique chunks from graph-identified documents")
         
     except Exception as e:
         logger.error(f"Error in graph-enhanced search: {e}")
@@ -767,16 +1044,66 @@ async def chat(request: QueryRequest):
         # Generate embedding for the question
         question_embedding = embedding_model.encode(request.question).tolist()
         
-        # Determine whether to use knowledge graph
-        # If request specifies, use that; otherwise use server default
-        use_graph = request.use_knowledge_graph if request.use_knowledge_graph is not None else USE_KNOWLEDGE_GRAPH
+        # Determine search mode
+        # Priority: search_mode > use_knowledge_graph > server default
+        search_mode = request.search_mode
+        if search_mode is None:
+            if request.use_knowledge_graph is not None:
+                search_mode = 'graph' if request.use_knowledge_graph else 'vector'
+            else:
+                search_mode = 'graph' if USE_KNOWLEDGE_GRAPH else 'vector'
         
-        # Try graph-enhanced search if enabled
-        graph_results = None
+        logger.info(f"Using search mode: {search_mode}")
+        
+        # Initialize result variables
+        search_results = []
         related_topics = None
         graph_enhanced = False
+        triple_results = None
+        facts = []
         
-        if use_graph:
+        if search_mode == 'triples':
+            # Use semantic triple search
+            logger.info("Using semantic triple search")
+            triple_results = await search_with_triples(
+                question_embedding,
+                request.max_results,
+                request.threshold
+            )
+            
+            facts = triple_results.get('facts', [])
+            
+            # If we have triples with sources, get the actual document chunks
+            if triple_results.get('sources'):
+                source_files = list(triple_results['sources'])
+                logger.info(f"Triple search found sources: {source_files}")
+                
+                # Search for chunks from the source files identified by triples
+                search_results = qdrant_client.search(
+                    collection_name=COLLECTION_NAME,
+                    query_vector=question_embedding,
+                    limit=request.max_results * 2,
+                    query_filter=Filter(
+                        should=[
+                            FieldCondition(key="file_name", match=MatchValue(value=src))
+                            for src in source_files[:5]
+                        ]
+                    ),
+                    score_threshold=max(request.threshold - 0.15, 0.15)
+                )
+                logger.info(f"Found {len(search_results)} chunks from triple sources")
+            
+            # Fallback to regular search if no chunks found
+            if not search_results:
+                search_results = qdrant_client.search(
+                    collection_name=COLLECTION_NAME,
+                    query_vector=question_embedding,
+                    limit=request.max_results * 2,
+                    score_threshold=max(request.threshold - 0.1, 0.2)
+                )
+        
+        elif search_mode == 'graph':
+            # Use knowledge graph enhanced search
             logger.info("Using knowledge graph enhanced search")
             graph_results = await search_with_knowledge_graph(
                 question_embedding, 
@@ -798,9 +1125,10 @@ async def chat(request: QueryRequest):
                     limit=min(request.max_results * 2, 10),
                     score_threshold=max(request.threshold - 0.1, 0.2)
                 )
+        
         else:
-            # Standard search without graph
-            logger.info("Using standard vector search (graph disabled)")
+            # Standard vector search
+            logger.info("Using standard vector search")
             search_results = qdrant_client.search(
                 collection_name=COLLECTION_NAME,
                 query_vector=question_embedding,
@@ -861,6 +1189,7 @@ async def chat(request: QueryRequest):
         
         # Debug: Print what we're working with
         print(f"\nDEBUG - Question: {request.question}")
+        print(f"DEBUG - Search mode: {search_mode}")
         print(f"DEBUG - Top chunks count: {len(top_chunks)}")
         for i, chunk in enumerate(top_chunks):
             print(f"DEBUG - Chunk {i} (score: {similarity_scores[i]:.3f}): {chunk[:150]}...")
@@ -871,10 +1200,22 @@ async def chat(request: QueryRequest):
             topic_names = [t['label'] for t in related_topics[:3]]
             topic_context = f"\n\nRelated topic areas: {', '.join(topic_names)}"
         
+        # Add semantic facts to context if we have triples
+        fact_context = ""
+        if facts:
+            fact_text = [f"- {f['subject']} {f['predicate'].replace('_', ' ')} {f['object']}" for f in facts[:8]]
+            fact_context = f"\n\nKnown facts from the knowledge base:\n" + "\n".join(fact_text)
+        
         # Generate answer using LLM synthesis (Copilot-style)
-        answer = await synthesize_answer_with_llm(request.question, top_chunks, topic_context)
+        answer = await synthesize_answer_with_llm(request.question, top_chunks, topic_context + fact_context)
         
         query_time = (datetime.now() - start_time).total_seconds()
+        
+        # Format facts for response
+        response_facts = [
+            {'subject': f['subject'], 'predicate': f['predicate'], 'object': f['object']}
+            for f in facts[:15]
+        ] if facts else None
         
         return ChatResponse(
             answer=answer,
@@ -882,7 +1223,9 @@ async def chat(request: QueryRequest):
             query_time=query_time,
             similarity_scores=similarity_scores,
             related_topics=related_topics,
-            graph_enhanced=graph_enhanced
+            graph_enhanced=graph_enhanced,
+            search_mode=search_mode,
+            facts=response_facts
         )
         
     except Exception as e:

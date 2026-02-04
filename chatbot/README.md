@@ -22,13 +22,15 @@ User Question → Embedding Model → Qdrant Search → Answer Generation → Re
 ### 1. Build the Docker Image
 ```bash
 cd chatbot
-docker build -t chatbot-service:latest .
+docker build -t lorekeeper-chatbot:latest .
+
 ```
 
 ### 2. Import to MicroK8s
 ```bash
-docker save chatbot-service:latest > chatbot-service-latest.tar
-microk8s ctr image import chatbot-service-latest.tar
+docker save lorekeeper-chatbot:latest > lorekeeper-chatbot-latest.tar
+microk8s ctr image import lorekeeper-chatbot-latest.tar
+
 ```
 
 ### 3. Deploy to Kubernetes

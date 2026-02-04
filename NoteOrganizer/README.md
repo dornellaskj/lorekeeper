@@ -16,7 +16,11 @@ This tool:
 cd NoteOrganizer
 pip install -r requirements.txt
 ```
+# Extract triples from your documents
+python triple_extractor.py
 
+# Interactive query mode
+python triple_query.py
 ## Usage
 
 ### Basic Usage
