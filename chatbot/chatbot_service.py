@@ -15,7 +15,12 @@ import openai
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Lorekeeper Chatbot", version="1.0.0")
+app = FastAPI(title="Lorekeeper Chatbot", version="2.0.0")
+
+# Version info for deployment verification
+APP_VERSION = "2.0.0"
+BUILD_DATE = "2026-02-04"
+FEATURES = ["knowledge-graph-search", "graph-toggle-ui", "topic-clustering"]
 
 # Configuration
 QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant-service")
@@ -98,6 +103,15 @@ async def initialize_services():
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup."""
+    logger.info("=" * 60)
+    logger.info(f"🚀 LOREKEEPER CHATBOT v{APP_VERSION}")
+    logger.info(f"📅 Build Date: {BUILD_DATE}")
+    logger.info(f"✨ Features: {', '.join(FEATURES)}")
+    logger.info("=" * 60)
+    logger.info(f"Knowledge Graph Collection: {GRAPH_COLLECTION}")
+    logger.info(f"Knowledge Graph Enabled (default): {USE_KNOWLEDGE_GRAPH}")
+    logger.info("=" * 60)
+    
     success = await initialize_services()
     if not success:
         logger.error("Failed to initialize services. Some endpoints may not work.")
