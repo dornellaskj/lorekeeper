@@ -44,6 +44,7 @@ class QueryRequest(BaseModel):
     question: str
     max_results: Optional[int] = MAX_RESULTS
     threshold: Optional[float] = SIMILARITY_THRESHOLD
+    use_knowledge_graph: Optional[bool] = None  # None = use server default
 
 class ChatResponse(BaseModel):
     answer: str
@@ -237,6 +238,87 @@ async def chat_page():
             .clear-btn:hover {
                 background: #545b62;
             }
+            .toggle-container {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                margin-bottom: 15px;
+                padding: 10px 15px;
+                background: #f8f9fa;
+                border-radius: 5px;
+                border: 1px solid #e9ecef;
+            }
+            .toggle-label {
+                font-size: 14px;
+                color: #495057;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .toggle-switch {
+                position: relative;
+                width: 50px;
+                height: 26px;
+            }
+            .toggle-switch input {
+                opacity: 0;
+                width: 0;
+                height: 0;
+            }
+            .toggle-slider {
+                position: absolute;
+                cursor: pointer;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background-color: #ccc;
+                transition: 0.3s;
+                border-radius: 26px;
+            }
+            .toggle-slider:before {
+                position: absolute;
+                content: "";
+                height: 20px;
+                width: 20px;
+                left: 3px;
+                bottom: 3px;
+                background-color: white;
+                transition: 0.3s;
+                border-radius: 50%;
+            }
+            input:checked + .toggle-slider {
+                background-color: #28a745;
+            }
+            input:checked + .toggle-slider:before {
+                transform: translateX(24px);
+            }
+            .graph-badge {
+                display: inline-block;
+                padding: 2px 8px;
+                border-radius: 10px;
+                font-size: 11px;
+                font-weight: bold;
+                margin-left: 5px;
+            }
+            .badge-graph {
+                background: #28a745;
+                color: white;
+            }
+            .badge-standard {
+                background: #6c757d;
+                color: white;
+            }
+            .related-topics {
+                margin-top: 8px;
+                padding: 8px;
+                background: rgba(40, 167, 69, 0.1);
+                border-radius: 5px;
+                font-size: 13px;
+            }
+            .related-topics strong {
+                color: #28a745;
+            }
         </style>
     </head>
     <body>
@@ -247,6 +329,17 @@ async def chat_page():
             </p>
             
             <div class="chat-container">
+                <div class="toggle-container">
+                    <div class="toggle-label">
+                        🔍 <span>Search Mode:</span>
+                        <span id="modeLabel" style="font-weight: bold;">Knowledge Graph</span>
+                        <span id="modeBadge" class="graph-badge badge-graph">Enhanced</span>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="useGraphToggle" checked onchange="toggleSearchMode()">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
                 <button class="clear-btn" onclick="clearChat()">🗑️ Clear Chat</button>
                 
                 <div class="chat-messages" id="chatMessages">
@@ -272,6 +365,21 @@ async def chat_page():
             const questionInput = document.getElementById('questionInput');
             const askButton = document.getElementById('askButton');
             const loading = document.getElementById('loading');
+            const useGraphToggle = document.getElementById('useGraphToggle');
+            const modeLabel = document.getElementById('modeLabel');
+            const modeBadge = document.getElementById('modeBadge');
+
+            function toggleSearchMode() {
+                if (useGraphToggle.checked) {
+                    modeLabel.textContent = 'Knowledge Graph';
+                    modeBadge.textContent = 'Enhanced';
+                    modeBadge.className = 'graph-badge badge-graph';
+                } else {
+                    modeLabel.textContent = 'Standard Vector';
+                    modeBadge.textContent = 'Basic';
+                    modeBadge.className = 'graph-badge badge-standard';
+                }
+            }
 
             function handleKeyPress(event) {
                 if (event.key === 'Enter' && !event.shiftKey) {
@@ -285,12 +393,14 @@ async def chat_page():
                 if (!question) return;
 
                 // Add user message
+                const useGraph = useGraphToggle.checked;
                 addMessage(question, 'user');
                 
                 // Clear input and disable button
                 questionInput.value = '';
                 askButton.disabled = true;
                 loading.style.display = 'block';
+                loading.textContent = useGraph ? '🔍 Searching knowledge graph...' : '🔍 Searching documents...';
 
                 try {
                     const response = await fetch('/chat', {
@@ -298,7 +408,10 @@ async def chat_page():
                         headers: {
                             'Content-Type': 'application/json',
                         },
-                        body: JSON.stringify({ question: question })
+                        body: JSON.stringify({ 
+                            question: question,
+                            use_knowledge_graph: useGraph
+                        })
                     });
 
                     const data = await response.json();
@@ -339,6 +452,20 @@ async def chat_page():
                 messageDiv.className = 'message bot-message';
                 
                 const time = new Date().toLocaleTimeString();
+                const isGraphEnhanced = data.graph_enhanced || false;
+                const searchBadge = isGraphEnhanced 
+                    ? '<span class="graph-badge badge-graph">Graph</span>' 
+                    : '<span class="graph-badge badge-standard">Standard</span>';
+                
+                let relatedTopicsHtml = '';
+                if (data.related_topics && data.related_topics.length > 0) {
+                    const topicNames = data.related_topics.map(t => t.label).join(', ');
+                    relatedTopicsHtml = `
+                        <div class="related-topics">
+                            <strong>🏷️ Related Topics:</strong> ${topicNames}
+                        </div>
+                    `;
+                }
                 
                 let sourcesHtml = '';
                 if (data.sources && data.sources.length > 0) {
@@ -356,7 +483,8 @@ async def chat_page():
                 }
                 
                 messageDiv.innerHTML = `
-                    <strong>🤖 Lorekeeper:</strong> ${data.answer}
+                    <strong>🤖 Lorekeeper:</strong> ${searchBadge} ${data.answer}
+                    ${relatedTopicsHtml}
                     ${sourcesHtml}
                     <div class="stats">Query time: ${data.query_time.toFixed(2)}s | Found ${data.sources.length} relevant sources</div>
                     <div class="message-time">${time}</div>
@@ -625,12 +753,17 @@ async def chat(request: QueryRequest):
         # Generate embedding for the question
         question_embedding = embedding_model.encode(request.question).tolist()
         
-        # Try graph-enhanced search first
+        # Determine whether to use knowledge graph
+        # If request specifies, use that; otherwise use server default
+        use_graph = request.use_knowledge_graph if request.use_knowledge_graph is not None else USE_KNOWLEDGE_GRAPH
+        
+        # Try graph-enhanced search if enabled
         graph_results = None
         related_topics = None
         graph_enhanced = False
         
-        if USE_KNOWLEDGE_GRAPH:
+        if use_graph:
+            logger.info("Using knowledge graph enhanced search")
             graph_results = await search_with_knowledge_graph(
                 question_embedding, 
                 request.max_results, 
@@ -644,6 +777,7 @@ async def chat(request: QueryRequest):
                 logger.info(f"Using graph-enhanced results: {len(search_results)} chunks")
             else:
                 # Fall back to standard search
+                logger.info("Graph search returned no results, falling back to standard search")
                 search_results = qdrant_client.search(
                     collection_name=COLLECTION_NAME,
                     query_vector=question_embedding,
@@ -652,6 +786,7 @@ async def chat(request: QueryRequest):
                 )
         else:
             # Standard search without graph
+            logger.info("Using standard vector search (graph disabled)")
             search_results = qdrant_client.search(
                 collection_name=COLLECTION_NAME,
                 query_vector=question_embedding,
