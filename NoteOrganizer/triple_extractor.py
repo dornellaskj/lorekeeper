@@ -355,6 +355,83 @@ class SemanticTripleStore:
         logger.info(f"Total triples extracted: {total_triples}")
         return total_triples
     
+    def process_from_qdrant(self, source_collection: str = "documents") -> int:
+        """
+        Process documents directly from Qdrant vector database.
+        
+        This reads the 'content' field from each point in the source collection
+        and extracts triples from it.
+        
+        Args:
+            source_collection: Name of the Qdrant collection containing documents
+            
+        Returns:
+            Total number of triples extracted
+        """
+        logger.info(f"Fetching documents from Qdrant collection: {source_collection}")
+        
+        # Verify collection exists
+        try:
+            collection_info = self.qdrant_client.get_collection(source_collection)
+            total_points = collection_info.points_count
+            logger.info(f"Collection '{source_collection}' has {total_points} points")
+        except Exception as e:
+            logger.error(f"Collection '{source_collection}' not found: {e}")
+            return 0
+        
+        total_triples = 0
+        processed_docs = set()  # Track unique documents to avoid duplicates
+        offset = None
+        batch_size = 100
+        points_processed = 0
+        
+        while True:
+            results, next_offset = self.qdrant_client.scroll(
+                collection_name=source_collection,
+                limit=batch_size,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False  # Don't need vectors, just content
+            )
+            
+            if not results:
+                break
+            
+            for point in results:
+                payload = point.payload
+                content = payload.get('content', '')
+                file_name = payload.get('file_name', f'chunk_{point.id}')
+                chunk_index = payload.get('chunk_index', 0)
+                
+                # Create unique identifier for this chunk
+                doc_id = f"{file_name}:chunk{chunk_index}"
+                
+                if doc_id in processed_docs:
+                    continue
+                processed_docs.add(doc_id)
+                
+                if not content or len(content.strip()) < 20:
+                    continue
+                
+                try:
+                    triples = self.process_document(content, file_name)
+                    total_triples += len(triples)
+                    points_processed += 1
+                    
+                    if points_processed % 50 == 0:
+                        logger.info(f"Processed {points_processed} chunks, extracted {total_triples} triples...")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing {doc_id}: {e}")
+            
+            if next_offset is None:
+                break
+            offset = next_offset
+        
+        logger.info(f"Finished processing {points_processed} chunks from Qdrant")
+        logger.info(f"Total triples extracted: {total_triples}")
+        return total_triples
+    
     def query_by_subject(self, subject: str, limit: int = 10) -> List[Dict]:
         """Find all triples with a given subject."""
         results, _ = self.qdrant_client.scroll(
@@ -496,14 +573,19 @@ def main():
     qdrant_host = os.getenv("QDRANT_HOST", "192.168.86.160")
     qdrant_port = int(os.getenv("QDRANT_PORT", "6333"))
     collection_name = os.getenv("TRIPLE_COLLECTION", "semantic_triples")
+    source_collection = os.getenv("SOURCE_COLLECTION", "documents")
+    use_qdrant = os.getenv("USE_QDRANT_SOURCE", "true").lower() == "true"
     data_folder = os.getenv("DATA_FOLDER", "../DataInput/loaded data")
     
     logger.info("=" * 60)
     logger.info("SEMANTIC TRIPLE EXTRACTOR")
     logger.info("=" * 60)
     logger.info(f"Qdrant: {qdrant_host}:{qdrant_port}")
-    logger.info(f"Collection: {collection_name}")
-    logger.info(f"Data Folder: {data_folder}")
+    logger.info(f"Triple Collection: {collection_name}")
+    if use_qdrant:
+        logger.info(f"Source: Qdrant collection '{source_collection}'")
+    else:
+        logger.info(f"Source: Local folder '{data_folder}'")
     
     # Initialize store
     store = SemanticTripleStore(
@@ -512,8 +594,11 @@ def main():
         collection_name=collection_name
     )
     
-    # Process documents
-    total = store.process_documents_folder(data_folder)
+    # Process documents from Qdrant or local folder
+    if use_qdrant:
+        total = store.process_from_qdrant(source_collection)
+    else:
+        total = store.process_documents_folder(data_folder)
     
     # Print stats
     stats = store.get_stats()
