@@ -48,12 +48,12 @@ class TripleQueryEngine:
         query_embedding = self.embedding_model.encode(question).tolist()
         
         # Search for relevant triples
-        results = self.qdrant_client.search(
+        results = self.qdrant_client.query_points(
             collection_name=self.triple_collection,
-            query_vector=query_embedding,
+            query=query_embedding,
             limit=limit * 2,  # Get more for filtering
             score_threshold=0.3
-        )
+        ).points
         
         # Organize results
         facts = []
